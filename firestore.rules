@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Mascotas, servicios y movimientos — acceso abierto a la app
+    match /mascotas/{id}    { allow read, write: if true; }
+    match /servicios/{id}   { allow read, write: if true; }
+    match /movimientos/{id} { allow read, write: if true; }
+  }
+}
