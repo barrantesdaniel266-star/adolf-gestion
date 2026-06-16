@@ -19,6 +19,14 @@ const display = "'Barlow Condensed', system-ui, sans-serif";
 const TAGLINE = "🐾 Bienestar y mantenimiento para tu mascota";
 const TIMEOUT_MIN = 20;
 
+// Medios de pago que aparecen en la factura (edítalos aquí cuando cambien)
+const PAGOS = [
+  { label: "Ahorros Bancolombia", valor: "39700017536" },
+  { label: "Llave Nequi", valor: "3145812053" },
+];
+// Servicios que el cliente puede solicitar desde su enlace
+const TIPOS_CLIENTE = ["paseo", "bano", "hotel"];
+
 const USUARIO = "YELIANNY";
 const CLAVE   = "Nocopeo2626";
 
@@ -299,7 +307,7 @@ function Resumen({ datos, irMascota }) {
 
 /* ====================== RECORDATORIOS DE PAGO ====================== */
 function RecordatoriosPago({ pendientes, duenos, mes, onClose }) {
-  const msg = (c) => `Hola ${c.nombre} 🐾 Te recordamos tu saldo pendiente de ${money(c.saldo)} por los servicios de ${nombreMes(mes)} en ADOLF. Cuando puedas, agradecemos tu pago. ¡Gracias!`;
+  const msg = (c) => `Hola ${c.nombre} 🐾 Te recordamos tu saldo pendiente de ${money(c.saldo)} por los servicios de ${nombreMes(mes)} en ADOLF. Cuando puedas, agradecemos tu pago.\n\n*Medios de pago*\n${PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n")}\n\n¡Gracias!`;
   return (
     <Modal title="Recordatorios de pago" onClose={onClose}>
       <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Clientes con saldo pendiente de {nombreMes(mes)}. Envía el recordatorio con un toque (WhatsApp no permite envío masivo desde la web).</p>
@@ -327,7 +335,8 @@ function Agenda({ mascotas, servicios, citas }) {
   const dias = [...Array(7)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return d; });
   const nombreMascota = (id) => (mascotas.find((m) => m.id === id) || {}).nombre || "—";
 
-  const avanzar = async (c) => { const orden = { agendado: "en_curso", en_curso: "completado", completado: "agendado" }; await updateDoc(doc(db, "citas", c.id), { estado: orden[c.estado || "agendado"] }); };
+  const avanzar = async (c) => { if ((c.estado || "agendado") === "solicitado") return; const orden = { agendado: "en_curso", en_curso: "completado", completado: "agendado" }; await updateDoc(doc(db, "citas", c.id), { estado: orden[c.estado || "agendado"] }); };
+  const confirmar = async (c) => { await updateDoc(doc(db, "citas", c.id), { estado: "agendado" }); };
   const facturar = async (c) => {
     const serv = servicios.find((s) => s.mascotaId === c.mascotaId && s.tipo === c.tipoServicio) || servicios.find((s) => s.mascotaId === c.mascotaId);
     if (!serv) return alert("Esta mascota no tiene una tarifa creada para facturar. Agrégala en su perfil.");
@@ -338,13 +347,30 @@ function Agenda({ mascotas, servicios, citas }) {
   };
   const borrar = async (c) => { if (confirm("¿Eliminar esta cita?")) await deleteDoc(doc(db, "citas", c.id)); };
 
-  const colorEstado = (e) => e === "completado" ? T.ok : e === "en_curso" ? T.info : T.pend;
-  const labelEstado = (e) => e === "completado" ? "Completado" : e === "en_curso" ? "En curso" : "Agendado";
+  const colorEstado = (e) => e === "completado" ? T.ok : e === "en_curso" ? T.info : e === "solicitado" ? T.rustSoft : T.pend;
+  const labelEstado = (e) => e === "completado" ? "Completado" : e === "en_curso" ? "En curso" : e === "solicitado" ? "Solicitado" : "Agendado";
+  const solicitudes = citas.filter((c) => (c.estado || "agendado") === "solicitado").sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
 
   return (
     <div style={{ animation: "pop .35s ease" }}>
       <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Agenda</H1><button onClick={() => setForm({})} style={btnPrim} disabled={mascotas.length === 0}>+ Nueva cita</button></Row>
-      <Row between style={{ marginTop: 14 }}>
+
+      {solicitudes.length > 0 && (
+        <Card style={{ marginTop: 14, borderColor: T.rust }}>
+          <H2>🔔 {solicitudes.length} solicitud{solicitudes.length !== 1 ? "es" : ""} de clientes por confirmar</H2>
+          {solicitudes.map((c) => { const inf = servInfo(c.tipoServicio); return (
+            <Row key={c.id} between style={{ padding: "9px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 13.5 }}>{inf.icon} {nombreMascota(c.mascotaId)} · {inf.nombre}<div style={{ fontSize: 11.5, color: T.muted }}>{c.fecha} {c.hora}{c.nota ? ` · ${c.nota}` : ""}</div></div>
+              <Row style={{ gap: 6 }}>
+                <button onClick={() => confirmar(c)} style={{ ...btnSmall, background: `linear-gradient(180deg,#86d18e,${T.ok})`, color: "#0e2412" }}>✓ Confirmar</button>
+                <button onClick={() => borrar(c)} style={{ ...btnGhost, color: T.danger, borderColor: "#4a2a22", padding: "7px 10px", fontSize: 12.5 }}>Rechazar</button>
+              </Row>
+            </Row>
+          ); })}
+        </Card>
+      )}
+
+      <Row between style={{ marginTop: 16 }}>
         <button onClick={() => setOffset(offset - 1)} style={btnGhost}>← Semana</button>
         <b style={{ fontFamily: display, fontSize: 18, color: T.cream }}>{offset === 0 ? "Esta semana" : `${fmt(dias[0]).slice(5)} — ${fmt(dias[6]).slice(5)}`}</b>
         <button onClick={() => setOffset(offset + 1)} style={btnGhost}>Semana →</button>
@@ -358,19 +384,26 @@ function Agenda({ mascotas, servicios, citas }) {
             return (
               <div key={i} style={{ background: esHoy ? "#33271a" : T.card, border: `1px solid ${esHoy ? T.rust : T.line}`, borderRadius: 13, padding: 10, minHeight: 160 }}>
                 <div style={{ textAlign: "center", paddingBottom: 8, borderBottom: `1px solid ${T.line}`, marginBottom: 8 }}><div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase" }}>{DIAS[i]}</div><div style={{ fontSize: 18, fontWeight: 800, color: esHoy ? T.rust : T.cream }}>{d.getDate()}</div></div>
-                {delDia.length === 0 ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; return (
-                  <div key={c.id} style={{ background: T.surface2, border: `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 8, padding: "7px 8px", marginBottom: 6 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: T.cream }}>{c.hora || "--:--"} {inf.icon}</div>
+                {delDia.length === 0 ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; const esSol = est === "solicitado"; return (
+                  <div key={c.id} style={{ background: T.surface2, border: esSol ? `1px dashed ${T.rust}` : `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 8, padding: "7px 8px", marginBottom: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: T.cream }}>{c.hora || "--:--"} {inf.icon}{esSol && " 🔔"}</div>
                     <div style={{ fontSize: 12, color: T.text }}>{nombreMascota(c.mascotaId)}</div>
                     <div style={{ fontSize: 10.5, color: T.muted }}>{inf.nombre}{c.nota ? ` · ${c.nota}` : ""}</div>
-                    <Row between style={{ marginTop: 5 }}>
-                      <button onClick={() => avanzar(c)} style={{ fontSize: 9.5, fontWeight: 700, color: colorEstado(est), background: "transparent", border: `1px solid ${colorEstado(est)}`, borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>{labelEstado(est)}</button>
-                      <Row style={{ gap: 2 }}>
-                        {est === "completado" && !c.facturado && <button onClick={() => facturar(c)} style={{ ...xBtn, color: T.tan, fontSize: 12 }} title="Facturar">💲</button>}
-                        {c.facturado && <span style={{ fontSize: 9.5, color: T.ok }}>✓ facturado</span>}
-                        <button onClick={() => borrar(c)} style={{ ...xBtn, fontSize: 12 }}>✕</button>
+                    {esSol ? (
+                      <Row style={{ marginTop: 5, gap: 4 }}>
+                        <button onClick={() => confirmar(c)} style={{ fontSize: 9.5, fontWeight: 700, color: T.ok, background: "transparent", border: `1px solid ${T.ok}`, borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>✓ Confirmar</button>
+                        <button onClick={() => borrar(c)} style={{ ...xBtn, fontSize: 12 }} title="Rechazar">✕</button>
                       </Row>
-                    </Row>
+                    ) : (
+                      <Row between style={{ marginTop: 5 }}>
+                        <button onClick={() => avanzar(c)} style={{ fontSize: 9.5, fontWeight: 700, color: colorEstado(est), background: "transparent", border: `1px solid ${colorEstado(est)}`, borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>{labelEstado(est)}</button>
+                        <Row style={{ gap: 2 }}>
+                          {est === "completado" && !c.facturado && <button onClick={() => facturar(c)} style={{ ...xBtn, color: T.tan, fontSize: 12 }} title="Facturar">💲</button>}
+                          {c.facturado && <span style={{ fontSize: 9.5, color: T.ok }}>✓ facturado</span>}
+                          <button onClick={() => borrar(c)} style={{ ...xBtn, fontSize: 12 }}>✕</button>
+                        </Row>
+                      </Row>
+                    )}
                   </div>
                 ); })}
               </div>
@@ -378,7 +411,7 @@ function Agenda({ mascotas, servicios, citas }) {
           })}
         </div>
       </div>
-      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Toca el estado para avanzar: Agendado → En curso → Completado. Una cita completada se puede facturar con 💲.</p>
+      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Las citas 🔔 son solicitudes de clientes por confirmar. Toca el estado para avanzar: Agendado → En curso → Completado. Una cita completada se puede facturar con 💲.</p>
       {form && <FormCita mascotas={mascotas} onClose={() => setForm(null)} />}
     </div>
   );
@@ -688,11 +721,12 @@ function Factura({ cliente, grupos, mes, onClose }) {
     let t = `🐾 *ADOLF* — Estado de cuenta\n${nombreMes(mes)}\n\nCliente: ${cliente.nombre}\n`;
     grupos.forEach((g) => { const lc = [...g.cargos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const la = [...g.abonos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); t += `\n${emojiMascota(g.mascota.tipo)} *${g.mascota.nombre}*\n`; lc.forEach((c) => { const i = servInfo(c.tipoServicio); t += `• ${c.fecha} ${i.nombre}${c.cantidad > 1 ? ` x${c.cantidad}` : ""}: ${money(c.monto)}${pagado(c) ? " ✓" : ""}\n`; }); la.forEach((a) => { t += `• ${a.fecha} Abono: ${money(a.monto)}\n`; }); });
     t += `\n*Total servicios: ${money(facturado)}*\n*Cobrado: ${money(cobrado)}*\n*SALDO ${saldo >= 0 ? "PENDIENTE" : "A FAVOR"}: ${money(Math.abs(saldo))}*`;
+    t += `\n\n*Medios de pago*\n` + PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n");
     return t;
   };
   const imprimir = () => {
     const secc = grupos.map((g) => { const lc = [...g.cargos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const la = [...g.abonos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const fc = lc.map((c) => { const i = servInfo(c.tipoServicio); return `<tr><td>${c.fecha}</td><td>${i.nombre}${c.cantidad > 1 ? " x" + c.cantidad : ""}${c.notas ? " — " + c.notas : ""}</td><td class="r">${money(c.monto)}</td><td class="r">${pagado(c) ? "Pagado" : "Pendiente"}</td></tr>`; }).join(""); const fa = la.map((a) => `<tr><td>${a.fecha}</td><td>Abono${a.notas ? " — " + a.notas : ""}</td><td class="r">${money(a.monto)}</td><td class="r">—</td></tr>`).join(""); return `<h2>${emojiMascota(g.mascota.tipo)} ${g.mascota.nombre}</h2><table><thead><tr><th>Fecha</th><th>Concepto</th><th class="r">Valor</th><th class="r">Estado</th></tr></thead><tbody>${fc || '<tr><td colspan="4" style="color:#999">Sin servicios</td></tr>'}${fa}</tbody></table>`; }).join("");
-    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Factura ${cliente.nombre}</title><style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:660px;margin:0 auto}.head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:14px}.brand{font-size:34px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}.meta{text-align:right;font-size:12px;color:#555;line-height:1.6}h2{font-size:15px;margin:20px 0 6px}.cli{font-size:14px;margin-top:14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eee}th{font-size:11px;text-transform:uppercase;color:#999}.r{text-align:right}.tot{margin-top:22px;margin-left:auto;width:300px;font-size:14px}.tot div{display:flex;justify-content:space-between;padding:6px 0}.tot .big{border-top:2px solid #1c1712;margin-top:6px;padding-top:10px;font-size:19px;font-weight:800}.pend{color:#c47d10}.fav{color:#2f8f3a}.foot{margin-top:30px;text-align:center;font-weight:800;letter-spacing:3px;font-size:18px}</style></head><body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div class="meta"><b>Estado de cuenta</b><br>${nombreMes(mes)}<br>Emitido: ${hoy()}</div></div><div class="cli"><b>Cliente:</b> ${cliente.nombre}${cliente.telefono ? " · " + cliente.telefono : ""}</div>${secc}<div class="tot"><div><span>Total servicios</span><b>${money(facturado)}</b></div><div><span>Cobrado</span><b>− ${money(cobrado)}</b></div><div class="big ${saldo >= 0 ? "pend" : "fav"}"><span>Saldo ${saldo >= 0 ? "pendiente" : "a favor"}</span><span>${money(Math.abs(saldo))}</span></div></div><div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
+    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Factura ${cliente.nombre}</title><style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:660px;margin:0 auto}.head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:14px}.brand{font-size:34px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}.meta{text-align:right;font-size:12px;color:#555;line-height:1.6}h2{font-size:15px;margin:20px 0 6px}.cli{font-size:14px;margin-top:14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eee}th{font-size:11px;text-transform:uppercase;color:#999}.r{text-align:right}.tot{margin-top:22px;margin-left:auto;width:300px;font-size:14px}.tot div{display:flex;justify-content:space-between;padding:6px 0}.tot .big{border-top:2px solid #1c1712;margin-top:6px;padding-top:10px;font-size:19px;font-weight:800}.pend{color:#c47d10}.fav{color:#2f8f3a}.pagos{margin-top:22px;padding:12px 14px;background:#faf3ea;border:1px solid #ecd9c2;border-radius:10px;font-size:13px;line-height:1.7}.pagos b.t{display:block;color:#d2772f;text-transform:uppercase;font-size:11px;letter-spacing:.5px;margin-bottom:4px}.foot{margin-top:24px;text-align:center;font-weight:800;letter-spacing:3px;font-size:18px}</style></head><body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div class="meta"><b>Estado de cuenta</b><br>${nombreMes(mes)}<br>Emitido: ${hoy()}</div></div><div class="cli"><b>Cliente:</b> ${cliente.nombre}${cliente.telefono ? " · " + cliente.telefono : ""}</div>${secc}<div class="tot"><div><span>Total servicios</span><b>${money(facturado)}</b></div><div><span>Cobrado</span><b>− ${money(cobrado)}</b></div><div class="big ${saldo >= 0 ? "pend" : "fav"}"><span>Saldo ${saldo >= 0 ? "pendiente" : "a favor"}</span><span>${money(Math.abs(saldo))}</span></div></div><div class="pagos"><b class="t">Medios de pago</b>${PAGOS.map((p) => `${p.label}: <b>${p.valor}</b>`).join("<br>")}</div><div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
     const w = window.open("", "_blank"); if (!w) return alert("Permite las ventanas emergentes."); w.document.write(html); w.document.close();
   };
   return (
@@ -705,6 +739,10 @@ function Factura({ cliente, grupos, mes, onClose }) {
             {lc.length === 0 && la.length === 0 ? <div style={{ color: "#999", fontSize: 13 }}>Sin movimientos</div> : <>{lc.map((c) => { const i = servInfo(c.tipoServicio); return <Row key={c.id} between style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid #eee" }}><span>{c.fecha} · {i.nombre}{c.cantidad > 1 ? ` x${c.cantidad}` : ""} {pagado(c) ? <span style={{ color: "#2f8f3a" }}>✓</span> : <span style={{ color: "#c47d10", fontSize: 11 }}>pend.</span>}</span><b>{money(c.monto)}</b></Row>; })}{la.map((a) => <Row key={a.id} between style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid #eee", color: "#2f8f3a" }}><span>{a.fecha} · Abono</span><b>− {money(a.monto)}</b></Row>)}</>}
           </div>); })}
         <div style={{ marginTop: 16, fontSize: 14 }}><Row between style={{ padding: "3px 0" }}><span>Total servicios</span><b>{money(facturado)}</b></Row><Row between style={{ padding: "3px 0" }}><span>Cobrado</span><b>− {money(cobrado)}</b></Row><Row between style={{ borderTop: "2px solid #1c1712", marginTop: 6, paddingTop: 8, fontSize: 17, fontWeight: 800, color: saldo >= 0 ? "#c47d10" : "#2f8f3a" }}><span>Saldo {saldo >= 0 ? "pendiente" : "a favor"}</span><span>{money(Math.abs(saldo))}</span></Row></div>
+        <div style={{ marginTop: 14, background: "#faf3ea", border: "1px solid #ecd9c2", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: .5, color: "#d2772f", fontWeight: 700, marginBottom: 4 }}>Medios de pago</div>
+          {PAGOS.map((p, i) => <div key={i} style={{ fontSize: 13 }}>{p.label}: <b>{p.valor}</b></div>)}
+        </div>
         <div style={{ textAlign: "center", fontFamily: display, fontWeight: 800, letterSpacing: 3, fontSize: 18, marginTop: 16 }}>ADOLF</div>
       </div>
       <Row style={{ gap: 10, marginTop: 18, flexWrap: "wrap" }}><button onClick={imprimir} style={{ ...btnPrim, flex: 1, minWidth: 130 }}>🖨️ Imprimir / PDF</button><button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto())}`, "_blank")} disabled={!tel} style={{ ...btnPrim, flex: 1, minWidth: 130, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 WhatsApp</button></Row>
@@ -747,8 +785,9 @@ function TablaMovs({ movs, mostrarMascota, nombreMascota, readOnly }) {
 
 /* ====================== VISTA CLIENTE ====================== */
 function VistaCliente({ duenoId }) {
-  const { duenos, mascotas, servicios, movs, salud } = useDatos();
+  const { duenos, mascotas, servicios, movs, salud, citas } = useDatos();
   const [mes, setMes] = useState(mesActual()), [factura, setFactura] = useState(false), [zoom, setZoom] = useState(null), [cargando, setCargando] = useState(true);
+  const [solicitar, setSolicitar] = useState(false);
   useEffect(() => { const t = setTimeout(() => setCargando(false), 1500); return () => clearTimeout(t); }, []);
   const cliente = duenos.find((d) => d.id === duenoId);
   const sus = mascotas.filter((m) => m.duenoId === duenoId);
@@ -761,8 +800,30 @@ function VistaCliente({ duenoId }) {
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
       <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div></div></header>
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "22px 18px 80px" }}>
-        <Row between style={{ flexWrap: "wrap", gap: 10 }}><div><div style={{ fontSize: 14, color: T.muted }}>Hola,</div><H1>{cliente.nombre}</H1></div><Row style={{ gap: 8, flexWrap: "wrap" }}><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Ver factura del mes</button></Row></Row>
+        <Row between style={{ flexWrap: "wrap", gap: 10 }}><div><div style={{ fontSize: 14, color: T.muted }}>Hola,</div><H1>{cliente.nombre}</H1></div><Row style={{ gap: 8, flexWrap: "wrap" }}><button onClick={() => setSolicitar(true)} style={btnGhost} disabled={sus.length === 0}>📅 Solicitar cita</button><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Ver factura del mes</button></Row></Row>
         <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Información de tus mascotas y servicios prestados. Solo consulta.</p>
+
+        {(() => {
+          const misCitas = citas.filter((c) => sus.find((m) => m.id === c.mascotaId) && c.fecha >= hoy() && (c.estado || "agendado") !== "completado").sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
+          const estadoCli = (e) => e === "solicitado" ? "Pendiente de confirmar" : e === "agendado" ? "Confirmada" : e === "en_curso" ? "En curso" : "Completada";
+          const colorCli = (e) => e === "agendado" ? T.ok : e === "en_curso" ? T.info : T.pend;
+          if (misCitas.length === 0) return null;
+          return (
+            <Card style={{ marginTop: 16 }}>
+              <H2>📅 Mis próximas citas</H2>
+              {misCitas.map((c, i) => { const inf = servInfo(c.tipoServicio); const m = mascotas.find((x) => x.id === c.mascotaId) || {}; const est = c.estado || "agendado"; return (
+                <Row key={c.id} between style={{ padding: "10px 0", borderBottom: i < misCitas.length - 1 ? `1px solid ${T.line}` : "none", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 13.5 }}>{inf.icon} {m.nombre} · {inf.nombre}<div style={{ fontSize: 11.5, color: T.muted }}>{c.fecha} {c.hora}</div></div>
+                  <Row style={{ gap: 8 }}>
+                    <span style={{ ...badge, background: T.surface2, color: colorCli(est), borderColor: colorCli(est) }}>{estadoCli(est)}</span>
+                    {est === "solicitado" && <button onClick={async () => { if (confirm("¿Cancelar esta solicitud?")) await deleteDoc(doc(db, "citas", c.id)); }} style={xBtn}>✕</button>}
+                  </Row>
+                </Row>
+              ); })}
+            </Card>
+          );
+        })()}
+
         {sus.length === 0 ? <Card style={{ marginTop: 18, textAlign: "center", padding: 36 }}><div style={{ fontSize: 34 }}>🐾</div><p style={{ color: T.muted, marginTop: 8 }}>Aún no hay mascotas registradas.</p></Card>
           : sus.map((m) => { const mm = movs.filter((x) => x.mascotaId === m.id && mesDe(x.fecha) === mes); const t = totales(mm); const tarifas = servicios.filter((s) => s.mascotaId === m.id); const vac = salud.filter((s) => s.mascotaId === m.id && s.proxima); return (
             <Card key={m.id} style={{ marginTop: 16 }}>
@@ -777,11 +838,60 @@ function VistaCliente({ duenoId }) {
       </main>
       {factura && <Factura cliente={cliente} grupos={grupos} mes={mes} onClose={() => setFactura(false)} />}
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
+      {solicitar && <FormSolicitudCita mascotas={sus} citas={citas} onClose={() => setSolicitar(false)} />}
     </div>
   );
 }
 const Centro = ({ children }) => <div style={{ minHeight: "100vh", background: T.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: 20 }}>{children}</div>;
 const MiniStat = ({ label, value, color }) => <div style={{ background: T.surface2, border: `1px solid ${T.line}`, borderRadius: 11, padding: "9px 10px", textAlign: "center" }}><div style={{ fontSize: 10, color: T.dim, textTransform: "uppercase", letterSpacing: .5 }}>{label}</div><div style={{ fontSize: 15, fontWeight: 800, color, marginTop: 2 }}>{value}</div></div>;
+
+/* ====================== SOLICITUD DE CITA (cliente) ====================== */
+function FormSolicitudCita({ mascotas, citas, onClose }) {
+  const opciones = SERVICIOS.filter((s) => TIPOS_CLIENTE.includes(s.id));
+  const [mascotaId, setMascotaId] = useState(mascotas[0]?.id || "");
+  const [tipoServicio, setTipo] = useState(opciones[0]?.id || "paseo");
+  const [fecha, setFecha] = useState(hoy());
+  const [hora, setHora] = useState("09:00");
+  const [nota, setNota] = useState("");
+  const [g, setG] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+
+  const ocupadas = citas.filter((c) => c.fecha === fecha && ["agendado", "en_curso"].includes(c.estado || "agendado")).map((c) => c.hora).filter(Boolean).sort();
+  const conflicto = ocupadas.includes(hora);
+
+  const enviar = async () => {
+    if (!mascotaId) return alert("Selecciona una mascota.");
+    setG(true);
+    try { await addDoc(collection(db, "citas"), { mascotaId, tipoServicio, fecha, hora, nota: nota.trim(), estado: "solicitado", facturado: false, origen: "cliente", createdAt: Date.now() }); setEnviado(true); }
+    catch (e) { alert("Error: " + e.message); setG(false); }
+  };
+
+  if (enviado) return (
+    <Modal title="Solicitud enviada" onClose={onClose}>
+      <div style={{ textAlign: "center", padding: "8px 0" }}><div style={{ fontSize: 44 }}>✅</div>
+        <p style={{ color: T.text, marginTop: 12, fontSize: 14 }}>Tu solicitud quedó registrada. Te <b>confirmaremos la disponibilidad</b> lo antes posible. Puedes ver su estado en “Mis próximas citas”.</p>
+        <button onClick={onClose} style={{ ...btnPrim, marginTop: 18 }}>Entendido</button></div>
+    </Modal>
+  );
+
+  return (
+    <Modal title="Solicitar una cita" onClose={onClose}>
+      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Elige el servicio y el horario. Tu solicitud será revisada y te confirmaremos la disponibilidad.</p>
+      <Label>Mascota</Label>
+      <select value={mascotaId} onChange={(e) => setMascotaId(e.target.value)} style={inp}>{mascotas.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}</select>
+      <div style={{ height: 12 }} /><Label>Servicio</Label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{opciones.map((s) => <button key={s.id} onClick={() => setTipo(s.id)} style={{ ...chip, ...(tipoServicio === s.id ? chipOn : {}), flex: 1 }}>{s.icon} {s.nombre.replace(" por horas", "").replace(" por noches", "")}</button>)}</div>
+      <div style={{ height: 12 }} />
+      <Grid2><div><Label>Fecha</Label><input type="date" min={hoy()} value={fecha} onChange={(e) => setFecha(e.target.value)} style={inp} /></div><div><Label>Hora</Label><input type="time" value={hora} onChange={(e) => setHora(e.target.value)} style={inp} /></div></Grid2>
+      <div style={{ marginTop: 8, fontSize: 12, color: ocupadas.length ? T.muted : T.dim }}>
+        {ocupadas.length ? <>Horarios ya ocupados ese día: <b style={{ color: T.text }}>{ocupadas.join(", ")}</b></> : "Ese día no hay citas confirmadas todavía."}
+      </div>
+      {conflicto && <div style={{ marginTop: 8, background: T.pendBg, border: `1px solid ${T.pend}`, color: T.pend, borderRadius: 10, padding: "8px 12px", fontSize: 12.5 }}>⚠️ Ese horario ya está ocupado. Puedes elegir otro o enviar la solicitud igualmente y te propondremos disponibilidad.</div>}
+      <div style={{ height: 12 }} /><Label>Nota (opcional)</Label><input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="ej. recoger en casa" style={inp} />
+      <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={enviar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Enviando…" : "Enviar solicitud"}</button></Row>
+    </Modal>
+  );
+}
 
 /* ====================== LIGHTBOX ====================== */
 function Lightbox({ src, onClose }) {
