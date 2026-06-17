@@ -214,7 +214,7 @@ function Login({ onOk }) {
 function useDatos() {
   const [duenos, setDuenos] = useState([]), [mascotas, setMascotas] = useState([]);
   const [servicios, setServicios] = useState([]), [movs, setMovs] = useState([]);
-  const [citas, setCitas] = useState([]), [salud, setSalud] = useState([]);
+  const [citas, setCitas] = useState([]), [salud, setSalud] = useState([]), [bloqueos, setBloqueos] = useState([]);
   useEffect(() => {
     const subs = [
       onSnapshot(query(collection(db, "duenos"), orderBy("nombre")), (s) => setDuenos(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
@@ -223,10 +223,11 @@ function useDatos() {
       onSnapshot(collection(db, "movimientos"), (s) => setMovs(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, "citas"), (s) => setCitas(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, "salud"), (s) => setSalud(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, "bloqueos"), (s) => setBloqueos(s.docs.map((d) => ({ id: d.id, ...d.data() })))),
     ];
     return () => subs.forEach((u) => u());
   }, []);
-  return { duenos, mascotas, servicios, movs, citas, salud };
+  return { duenos, mascotas, servicios, movs, citas, salud, bloqueos };
 }
 
 /* ====================== PANEL ====================== */
@@ -279,7 +280,7 @@ function Panel({ onLogout }) {
           : cliente ? <ClienteDetalle cliente={cliente} mascotas={mascotas} servicios={servicios} movs={movs} duenos={duenos} abrirMascota={(id) => setMascotaSel(id)} onBack={() => setClienteSel(null)} />
           : vista === "resumen" ? <Resumen datos={datos} irMascota={(id) => setMascotaSel(id)} />
           : vista === "clientes" ? <Clientes duenos={duenos} mascotas={mascotas} abrir={(id) => setClienteSel(id)} abrirMascota={(id) => setMascotaSel(id)} />
-          : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} movs={movs} />
+          : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} movs={movs} bloqueos={bloqueos} />
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
       </main>
       {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} onIr={irANoti} />}
@@ -466,13 +467,53 @@ function AdminPanel({ datos, onClose }) {
   );
 }
 
+/* ====================== SELECTORES DE FECHA Y HORA ====================== */
+const SLOTS_HORA = (() => { const a = []; for (let h = 7; h <= 20; h++) { a.push(`${String(h).padStart(2, "0")}:00`); if (h < 20) a.push(`${String(h).padStart(2, "0")}:30`); } return a; })();
+const TOPE_TARDE = "18:00"; // paseo y baño no después de las 6 PM
+const limitadoTarde = (tipo) => tipo === "paseo" || tipo === "bano";
+const DIA_ABBR = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+const MES_ABBR = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const diaBloqueado = (iso, bloqueos) => bloqueos.some((b) => b.fecha === iso && !b.hora);
+
+function PickerDia({ fecha, setFecha, bloqueos = [], dias = 21 }) {
+  const base = new Date(); base.setHours(0, 0, 0, 0);
+  const arr = [...Array(dias)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return d; });
+  return (
+    <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6 }}>
+      {arr.map((d, i) => { const iso = fmt(d); const sel = fecha === iso; const bloq = diaBloqueado(iso, bloqueos); return (
+        <button key={i} disabled={bloq} onClick={() => setFecha(iso)} style={{ flex: "0 0 auto", width: 56, padding: "8px 0", borderRadius: 11, border: `1px solid ${sel ? T.rust : T.line2}`, background: sel ? "#4a2f17" : T.surface2, cursor: bloq ? "not-allowed" : "pointer", textAlign: "center", opacity: bloq ? .4 : 1 }}>
+          <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase" }}>{DIA_ABBR[d.getDay()]}</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: sel ? T.rustSoft : T.cream }}>{d.getDate()}</div>
+          <div style={{ fontSize: 9, color: T.dim }}>{bloq ? "🔒" : MES_ABBR[d.getMonth()]}</div>
+        </button>); })}
+    </div>
+  );
+}
+
+function PickerHora({ fecha, hora, setHora, citas = [], bloqueos = [], tipoServicio }) {
+  const ocupadas = citas.filter((c) => c.fecha === fecha && (c.estado || "agendado") === "agendado").map((c) => c.hora);
+  const bloqSlot = bloqueos.filter((b) => b.fecha === fecha && b.hora).map((b) => b.hora);
+  const slots = SLOTS_HORA.filter((s) => !limitadoTarde(tipoServicio) || s <= TOPE_TARDE);
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
+        {slots.map((s) => { const no = ocupadas.includes(s) || bloqSlot.includes(s); const sel = hora === s; return (
+          <button key={s} disabled={no} onClick={() => setHora(s)} style={{ padding: "9px 0", borderRadius: 9, border: `1px solid ${sel ? T.rust : T.line2}`, background: sel ? "#4a2f17" : T.surface2, color: no ? T.dim : (sel ? T.rustSoft : T.text), cursor: no ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, textDecoration: no ? "line-through" : "none", opacity: no ? .45 : 1 }}>{s}</button>); })}
+      </div>
+      {limitadoTarde(tipoServicio) && <div style={{ fontSize: 11, color: T.dim, marginTop: 6 }}>Paseo y baño solo hasta las 6:00 PM.</div>}
+    </div>
+  );
+}
+
 /* ====================== AGENDA ====================== */
-function Agenda({ mascotas, servicios, citas, movs }) {
+function Agenda({ mascotas, servicios, citas, movs, bloqueos = [] }) {
   const [offset, setOffset] = useState(0);
   const [form, setForm] = useState(null);
+  const [bloqueo, setBloqueo] = useState(false);
   const base = inicioSemana(new Date()); base.setDate(base.getDate() + offset * 7);
   const dias = [...Array(7)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return d; });
   const nombreMascota = (id) => (mascotas.find((m) => m.id === id) || {}).nombre || "—";
+  const quitarBloqueo = async (b) => { if (confirm("¿Quitar este bloqueo?")) await deleteDoc(doc(db, "bloqueos", b.id)); };
 
   const confirmar = async (c) => { await updateDoc(doc(db, "citas", c.id), { estado: "agendado" }); };
   const rechazar = async (c) => { if (confirm("¿Rechazar esta solicitud? Se le avisará al cliente.")) await updateDoc(doc(db, "citas", c.id), { estado: "rechazado" }); };
@@ -500,7 +541,7 @@ function Agenda({ mascotas, servicios, citas, movs }) {
 
   return (
     <div style={{ animation: "pop .35s ease" }}>
-      <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Agenda</H1><button onClick={() => setForm({})} style={btnPrim} disabled={mascotas.length === 0}>+ Nueva cita</button></Row>
+      <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Agenda</H1><Row style={{ gap: 8 }}><button onClick={() => setBloqueo(true)} style={btnGhost}>🔒 Bloquear</button><button onClick={() => setForm({})} style={btnPrim} disabled={mascotas.length === 0}>+ Nueva cita</button></Row></Row>
 
       {solicitudes.length > 0 && (
         <Card style={{ marginTop: 14, borderColor: T.rust }}>
@@ -528,10 +569,16 @@ function Agenda({ mascotas, servicios, citas, movs }) {
           {dias.map((d, i) => {
             const iso = fmt(d); const esHoy = iso === hoy();
             const delDia = citas.filter((c) => c.fecha === iso).sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+            const bloqDia = bloqueos.filter((b) => b.fecha === iso).sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+            const todoBloq = bloqDia.find((b) => !b.hora);
             return (
               <div key={i} style={{ background: esHoy ? "#33271a" : T.card, border: `1px solid ${esHoy ? T.rust : T.line}`, borderRadius: 13, padding: 10, minHeight: 160 }}>
                 <div style={{ textAlign: "center", paddingBottom: 8, borderBottom: `1px solid ${T.line}`, marginBottom: 8 }}><div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase" }}>{DIAS[i]}</div><div style={{ fontSize: 18, fontWeight: 800, color: esHoy ? T.rust : T.cream }}>{d.getDate()}</div></div>
-                {delDia.length === 0 ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; const esSol = est === "solicitado"; const esRec = est === "rechazado"; return (
+                {todoBloq && <div style={{ background: "#3a1f1a", border: `1px solid ${T.danger}`, borderRadius: 8, padding: "5px 7px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 10.5, color: T.danger, fontWeight: 700 }}>🔒 Día bloqueado{todoBloq.motivo ? `: ${todoBloq.motivo}` : ""}</span><button onClick={() => quitarBloqueo(todoBloq)} style={{ ...xBtn, fontSize: 11 }}>✕</button></div>}
+                {!todoBloq && bloqDia.filter((b) => b.hora).map((b) => (
+                  <div key={b.id} style={{ background: "#33271a", border: `1px dashed ${T.danger}`, borderRadius: 8, padding: "5px 7px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 10.5, color: T.danger, fontWeight: 700 }}>🔒 {b.hora}{b.motivo ? ` · ${b.motivo}` : ""}</span><button onClick={() => quitarBloqueo(b)} style={{ ...xBtn, fontSize: 11 }}>✕</button></div>
+                ))}
+                {delDia.length === 0 && !bloqDia.length ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; const esSol = est === "solicitado"; const esRec = est === "rechazado"; return (
                   <div key={c.id} style={{ background: T.surface2, border: esSol ? `1px dashed ${T.rust}` : `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 8, padding: "7px 8px", marginBottom: 6, opacity: esRec ? .6 : 1 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: T.cream }}>{c.hora || "--:--"} {inf.icon}{esSol && " 🔔"}</div>
                     <div style={{ fontSize: 12, color: T.text, textDecoration: esRec ? "line-through" : "none" }}>{nombreMascota(c.mascotaId)}</div>
@@ -563,20 +610,50 @@ function Agenda({ mascotas, servicios, citas, movs }) {
         </div>
       </div>
       <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Las citas 🔔 son solicitudes de clientes por confirmar. Toca <b>Agendado</b> para marcar el servicio como <b>Completado</b>: se factura solo y aparece en Servicios y en la factura del mes.</p>
-      {form && <FormCita mascotas={mascotas} onClose={() => setForm(null)} />}
+      {form && <FormCita mascotas={mascotas} citas={citas} bloqueos={bloqueos} onClose={() => setForm(null)} />}
+      {bloqueo && <FormBloqueo bloqueos={bloqueos} onClose={() => setBloqueo(false)} />}
     </div>
   );
 }
 
-function FormCita({ mascotas, onClose }) {
+function FormBloqueo({ bloqueos, onClose }) {
+  const [modo, setModo] = useState("dia"); // dia | hora
+  const [fecha, setFecha] = useState(hoy());
+  const [hora, setHora] = useState("09:00");
+  const [motivo, setMotivo] = useState("");
+  const [g, setG] = useState(false);
+  const guardar = async () => {
+    setG(true);
+    try { await addDoc(collection(db, "bloqueos"), { fecha, hora: modo === "hora" ? hora : "", motivo: motivo.trim(), createdAt: Date.now() }); onClose(); }
+    catch (e) { alert("Error: " + e.message); setG(false); }
+  };
+  return (
+    <Modal title="Bloquear agenda" onClose={onClose}>
+      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Bloquea un día completo o una hora puntual. Los clientes no podrán reservar en lo bloqueado.</p>
+      <Label>¿Qué quieres bloquear?</Label>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button onClick={() => setModo("dia")} style={{ ...chip, ...(modo === "dia" ? chipOn : {}), flex: 1 }}>📅 Día completo</button>
+        <button onClick={() => setModo("hora")} style={{ ...chip, ...(modo === "hora" ? chipOn : {}), flex: 1 }}>🕐 Una hora</button>
+      </div>
+      <Label>Fecha</Label>
+      <PickerDia fecha={fecha} setFecha={setFecha} bloqueos={[]} />
+      {modo === "hora" && (<><div style={{ height: 8 }} /><Label>Hora a bloquear</Label><PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={[]} bloqueos={bloqueos} tipoServicio="" /></>)}
+      <div style={{ height: 12 }} /><Label>Motivo (opcional)</Label><input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="ej. vacaciones, cita médica…" style={inp} />
+      <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={guardar} disabled={g} style={{ ...btnPrim, flex: 1, background: `linear-gradient(180deg,${T.rustSoft},${T.rust})` }}>{g ? "Guardando…" : "🔒 Bloquear"}</button></Row>
+    </Modal>
+  );
+}
+
+function FormCita({ mascotas, citas = [], bloqueos = [], onClose }) {
   const [mascotaId, setMascotaId] = useState("");
   const [tipoServicio, setTipo] = useState("paseo");
   const [fecha, setFecha] = useState(hoy());
-  const [hora, setHora] = useState("09:00");
+  const [hora, setHora] = useState("");
   const [nota, setNota] = useState("");
   const [g, setG] = useState(false);
   const guardar = async () => {
     if (!mascotaId) return alert("Selecciona una mascota.");
+    if (!hora) return alert("Selecciona una hora.");
     setG(true);
     try { await addDoc(collection(db, "citas"), { mascotaId, tipoServicio, fecha, hora, nota: nota.trim(), estado: "agendado", facturado: false, createdAt: Date.now() }); onClose(); }
     catch (e) { alert("Error: " + e.message); setG(false); }
@@ -586,9 +663,11 @@ function FormCita({ mascotas, onClose }) {
       <Label>Mascota</Label>
       <select value={mascotaId} onChange={(e) => setMascotaId(e.target.value)} style={inp}><option value="">Selecciona…</option>{mascotas.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}</select>
       <div style={{ height: 12 }} /><Label>Servicio</Label>
-      <select value={tipoServicio} onChange={(e) => setTipo(e.target.value)} style={inp}>{SERVICIOS.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}</select>
-      <div style={{ height: 12 }} />
-      <Grid2><div><Label>Fecha</Label><input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} style={inp} /></div><div><Label>Hora</Label><input type="time" value={hora} onChange={(e) => setHora(e.target.value)} style={inp} /></div></Grid2>
+      <select value={tipoServicio} onChange={(e) => { setTipo(e.target.value); setHora(""); }} style={inp}>{SERVICIOS.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}</select>
+      <div style={{ height: 12 }} /><Label>Fecha</Label>
+      <PickerDia fecha={fecha} setFecha={(f) => { setFecha(f); setHora(""); }} bloqueos={bloqueos} />
+      <div style={{ height: 8 }} /><Label>Hora</Label>
+      <PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={citas} bloqueos={bloqueos} tipoServicio={tipoServicio} />
       <div style={{ height: 12 }} /><Label>Nota (opcional)</Label><input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="ej. recoger en casa" style={inp} />
       <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={guardar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Guardando…" : "Agendar"}</button></Row>
     </Modal>
@@ -785,7 +864,7 @@ function MascotaDetalle({ mascota, duenos, servicios, movs, salud, onBack }) {
 
       <Card style={{ marginTop: 16 }}>
         <Row between style={{ flexWrap: "wrap", gap: 8 }}><H2>Movimientos del periodo</H2><Row style={{ gap: 8 }}><button onClick={() => setFormAbono({ mascotaId: mascota.id })} style={{ ...btnSmall, background: "transparent", color: T.ok, border: `1px solid ${T.ok}` }}>+ Abono</button><button onClick={() => setFormMov({ mascotaId: mascota.id })} style={btnSmall} disabled={sus.length === 0}>+ Servicio</button></Row></Row>
-        {movsMes.length === 0 ? <Empty texto={sus.length === 0 ? "Primero agrega un servicio." : "Sin movimientos este periodo."} /> : <TablaMovs movs={movsMes} />}
+        {movsMes.length === 0 ? <Empty texto={sus.length === 0 ? "Primero agrega un servicio." : "Sin movimientos este periodo."} /> : <AcordeonMovs movs={movsMes} />}
       </Card>
 
       {editar && <FormMascota inicial={mascota} duenos={duenos} onClose={() => setEditar(false)} />}
@@ -1018,9 +1097,49 @@ function TablaMovs({ movs, mostrarMascota, nombreMascota, readOnly }) {
   );
 }
 
+/* ====================== ACORDEÓN DE MOVIMIENTOS (por tipo) ====================== */
+function AcordeonMovs({ movs, nombreMascota, mostrarMascota, readOnly }) {
+  const [abierto, setAbierto] = useState({});
+  const toggle = (k) => setAbierto((p) => ({ ...p, [k]: !p[k] }));
+  const cargos = movs.filter(esCargo);
+  const abonos = movs.filter(esAbono).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  const grupos = SERVICIOS.map((s) => {
+    const items = cargos.filter((c) => c.tipoServicio === s.id).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+    const total = items.reduce((a, m) => a + Number(m.monto || 0), 0);
+    const pend = items.filter((c) => !pagado(c)).reduce((a, m) => a + Number(m.monto || 0), 0);
+    return { ...s, items, total, pend };
+  }).filter((g) => g.items.length);
+  if (grupos.length === 0 && abonos.length === 0) return <Empty texto="Sin movimientos este mes." />;
+  const Seccion = ({ k, icon, nombre, n, total, pend, children }) => (
+    <div style={{ border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 8, overflow: "hidden", background: T.surface2 }}>
+      <button onClick={() => toggle(k)} style={{ width: "100%", background: "transparent", border: "none", color: T.text, padding: "12px 13px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left" }}>
+        <span style={{ fontSize: 19, width: 24, textAlign: "center" }}>{icon}</span>
+        <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontWeight: 700, fontSize: 13.5, color: T.cream }}>{nombre}</span><span style={{ fontSize: 11, color: T.muted }}> · {n} {n === 1 ? "registro" : "registros"}</span>{pend > 0 && <span style={{ fontSize: 11, color: T.pend }}> · {money(pend)} por cobrar</span>}</span>
+        <b style={{ fontVariantNumeric: "tabular-nums", color: T.tan, fontSize: 13.5 }}>{money(total)}</b>
+        <span style={{ color: T.dim, fontSize: 12, transform: abierto[k] ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
+      </button>
+      {abierto[k] && <div style={{ padding: "0 13px 6px", borderTop: `1px solid ${T.line}` }}>{children}</div>}
+    </div>
+  );
+  return (
+    <div>
+      {grupos.map((g) => (
+        <Seccion key={g.id} k={g.id} icon={g.icon} nombre={g.nombre} n={g.items.length} total={g.total} pend={g.pend}>
+          <TablaMovs movs={g.items} mostrarMascota={mostrarMascota} nombreMascota={nombreMascota} readOnly={readOnly} />
+        </Seccion>
+      ))}
+      {abonos.length > 0 && (
+        <Seccion k="_abonos" icon="💵" nombre="Abonos / pagos" n={abonos.length} total={abonos.reduce((a, m) => a + Number(m.monto || 0), 0)} pend={0}>
+          <TablaMovs movs={abonos} mostrarMascota={mostrarMascota} nombreMascota={nombreMascota} readOnly={readOnly} />
+        </Seccion>
+      )}
+    </div>
+  );
+}
+
 /* ====================== VISTA CLIENTE ====================== */
 function VistaCliente({ duenoId }) {
-  const { duenos, mascotas, servicios, movs, salud, citas } = useDatos();
+  const { duenos, mascotas, servicios, movs, salud, citas, bloqueos } = useDatos();
   const [mes, setMes] = useState(mesActual()), [factura, setFactura] = useState(false), [zoom, setZoom] = useState(null), [cargando, setCargando] = useState(true);
   const [solicitar, setSolicitar] = useState(false);
   useEffect(() => { const t = setTimeout(() => setCargando(false), 1500); return () => clearTimeout(t); }, []);
@@ -1121,13 +1240,13 @@ function VistaCliente({ duenoId }) {
               {vac.length > 0 && <div style={{ marginTop: 10, fontSize: 12, color: T.muted }}>Próximas: {vac.map((v) => `${v.titulo} (${v.proxima})`).join(" · ")}</div>}
               {tarifas.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>{tarifas.map((s) => { const i = servInfo(s.tipo); return <Pill key={s.id}>{i.icon} {i.nombre}: {money(s.valor)}{s.modalidad === "mensual" ? "/mes" : "/" + (s.unidad || i.unidad)}</Pill>; })}</div>}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 12 }}><MiniStat label="Facturado" value={money(t.facturado)} color={T.tan} /><MiniStat label="Cobrado" value={money(t.cobrado)} color={T.ok} /><MiniStat label={t.saldo >= 0 ? "Pendiente" : "A favor"} value={money(Math.abs(t.saldo))} color={t.saldo > 0 ? T.pend : T.ok} /></div>
-              <div style={{ marginTop: 12 }}>{mm.length === 0 ? <Empty texto="Sin servicios este mes." /> : <TablaMovs movs={[...mm].sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""))} readOnly />}</div>
+              <div style={{ marginTop: 12 }}>{mm.length === 0 ? <Empty texto="Sin servicios este mes." /> : <AcordeonMovs movs={mm} readOnly />}</div>
             </Card>); })}
         <div style={{ textAlign: "center", fontFamily: display, fontWeight: 800, letterSpacing: 3, color: T.cream, fontSize: 22, marginTop: 28 }}>ADOLF</div>
       </main>
       {factura && <Factura cliente={cliente} grupos={grupos} mes={mes} onClose={() => setFactura(false)} />}
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
-      {solicitar && <FormSolicitudCita mascotas={sus} citas={citas} onClose={() => setSolicitar(false)} />}
+      {solicitar && <FormSolicitudCita mascotas={sus} citas={citas} bloqueos={bloqueos} onClose={() => setSolicitar(false)} />}
       {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} />}
     </div>
   );
@@ -1136,21 +1255,19 @@ const Centro = ({ children }) => <div style={{ minHeight: "100vh", background: T
 const MiniStat = ({ label, value, color }) => <div style={{ background: T.surface2, border: `1px solid ${T.line}`, borderRadius: 11, padding: "9px 10px", textAlign: "center" }}><div style={{ fontSize: 10, color: T.dim, textTransform: "uppercase", letterSpacing: .5 }}>{label}</div><div style={{ fontSize: 15, fontWeight: 800, color, marginTop: 2 }}>{value}</div></div>;
 
 /* ====================== SOLICITUD DE CITA (cliente) ====================== */
-function FormSolicitudCita({ mascotas, citas, onClose }) {
+function FormSolicitudCita({ mascotas, citas, bloqueos = [], onClose }) {
   const opciones = SERVICIOS.filter((s) => TIPOS_CLIENTE.includes(s.id));
   const [mascotaId, setMascotaId] = useState(mascotas[0]?.id || "");
   const [tipoServicio, setTipo] = useState(opciones[0]?.id || "paseo");
   const [fecha, setFecha] = useState(hoy());
-  const [hora, setHora] = useState("09:00");
+  const [hora, setHora] = useState("");
   const [nota, setNota] = useState("");
   const [g, setG] = useState(false);
   const [enviado, setEnviado] = useState(false);
 
-  const ocupadas = citas.filter((c) => c.fecha === fecha && ["agendado", "en_curso"].includes(c.estado || "agendado")).map((c) => c.hora).filter(Boolean).sort();
-  const conflicto = ocupadas.includes(hora);
-
   const enviar = async () => {
     if (!mascotaId) return alert("Selecciona una mascota.");
+    if (!hora) return alert("Selecciona una hora disponible.");
     setG(true);
     try { await addDoc(collection(db, "citas"), { mascotaId, tipoServicio, fecha, hora, nota: nota.trim(), estado: "solicitado", facturado: false, origen: "cliente", createdAt: Date.now() }); setEnviado(true); }
     catch (e) { alert("Error: " + e.message); setG(false); }
@@ -1164,21 +1281,21 @@ function FormSolicitudCita({ mascotas, citas, onClose }) {
     </Modal>
   );
 
+  const sinHoras = diaBloqueado(fecha, bloqueos);
   return (
     <Modal title="Solicitar una cita" onClose={onClose}>
-      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Elige el servicio y el horario. Tu solicitud será revisada y te confirmaremos la disponibilidad.</p>
+      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Elige el servicio y el horario disponible. Tu solicitud será revisada y te confirmaremos.</p>
       <Label>Mascota</Label>
       <select value={mascotaId} onChange={(e) => setMascotaId(e.target.value)} style={inp}>{mascotas.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}</select>
       <div style={{ height: 12 }} /><Label>Servicio</Label>
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{opciones.map((s) => <button key={s.id} onClick={() => setTipo(s.id)} style={{ ...chip, ...(tipoServicio === s.id ? chipOn : {}), flex: 1 }}>{s.icon} {s.nombre.replace(" por horas", "").replace(" por noches", "")}</button>)}</div>
-      <div style={{ height: 12 }} />
-      <Grid2><div><Label>Fecha</Label><input type="date" min={hoy()} value={fecha} onChange={(e) => setFecha(e.target.value)} style={inp} /></div><div><Label>Hora</Label><input type="time" value={hora} onChange={(e) => setHora(e.target.value)} style={inp} /></div></Grid2>
-      <div style={{ marginTop: 8, fontSize: 12, color: ocupadas.length ? T.muted : T.dim }}>
-        {ocupadas.length ? <>Horarios ya ocupados ese día: <b style={{ color: T.text }}>{ocupadas.join(", ")}</b></> : "Ese día no hay citas confirmadas todavía."}
-      </div>
-      {conflicto && <div style={{ marginTop: 8, background: T.pendBg, border: `1px solid ${T.pend}`, color: T.pend, borderRadius: 10, padding: "8px 12px", fontSize: 12.5 }}>⚠️ Ese horario ya está ocupado. Puedes elegir otro o enviar la solicitud igualmente y te propondremos disponibilidad.</div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{opciones.map((s) => <button key={s.id} onClick={() => { setTipo(s.id); setHora(""); }} style={{ ...chip, ...(tipoServicio === s.id ? chipOn : {}), flex: 1 }}>{s.icon} {s.nombre.replace(" por horas", "").replace(" por noches", "")}</button>)}</div>
+      <div style={{ height: 12 }} /><Label>Fecha</Label>
+      <PickerDia fecha={fecha} setFecha={(f) => { setFecha(f); setHora(""); }} bloqueos={bloqueos} />
+      <div style={{ height: 8 }} /><Label>Hora disponible</Label>
+      {sinHoras ? <div style={{ background: T.pendBg, border: `1px solid ${T.pend}`, color: T.pend, borderRadius: 10, padding: "10px 12px", fontSize: 12.5 }}>Ese día no está disponible. Elige otra fecha.</div>
+        : <PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={citas} bloqueos={bloqueos} tipoServicio={tipoServicio} />}
       <div style={{ height: 12 }} /><Label>Nota (opcional)</Label><input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="ej. recoger en casa" style={inp} />
-      <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={enviar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Enviando…" : "Enviar solicitud"}</button></Row>
+      <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={enviar} disabled={g || !hora} style={{ ...btnPrim, flex: 1 }}>{g ? "Enviando…" : "Enviar solicitud"}</button></Row>
     </Modal>
   );
 }
