@@ -41,6 +41,8 @@ const servInfo = (id) => SERVICIOS.find((s) => s.id === id) || { nombre: id, ico
 
 /* ====================== HELPERS ====================== */
 const money = (n) => "$" + Number(n || 0).toLocaleString("es-CO");
+// Normaliza el teléfono para WhatsApp agregando el prefijo de Colombia (57) si falta
+const waTel = (t) => { const d = (t || "").replace(/\D/g, ""); if (!d) return ""; if (d.startsWith("57")) return d; if (d.length === 10) return "57" + d; return d; };
 const hoy = () => new Date().toISOString().slice(0, 10);
 const mesActual = () => new Date().toISOString().slice(0, 7);
 const mesDe = (f) => (f || "").slice(0, 7);
@@ -277,7 +279,7 @@ function Panel({ onLogout }) {
           : cliente ? <ClienteDetalle cliente={cliente} mascotas={mascotas} servicios={servicios} movs={movs} duenos={duenos} abrirMascota={(id) => setMascotaSel(id)} onBack={() => setClienteSel(null)} />
           : vista === "resumen" ? <Resumen datos={datos} irMascota={(id) => setMascotaSel(id)} />
           : vista === "clientes" ? <Clientes duenos={duenos} mascotas={mascotas} abrir={(id) => setClienteSel(id)} abrirMascota={(id) => setMascotaSel(id)} />
-          : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} />
+          : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} movs={movs} />
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
       </main>
       {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} onIr={irANoti} />}
@@ -357,7 +359,7 @@ function RecordatoriosPago({ pendientes, duenos, mes, onClose }) {
     <Modal title="Recordatorios de pago" onClose={onClose}>
       <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Clientes con saldo pendiente de {nombreMes(mes)}. Envía el recordatorio con un toque (WhatsApp no permite envío masivo desde la web).</p>
       {pendientes.length === 0 ? <Empty texto="Nadie tiene saldo pendiente este mes. 🎉" /> : pendientes.map((c) => {
-        const tel = (c.telefono || "").replace(/\D/g, "");
+        const tel = waTel(c.telefono);
         return (
           <Row key={c.id} between style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
             <div><b style={{ fontSize: 14 }}>{c.nombre}</b><div style={{ fontSize: 12, color: T.pend }}>debe {money(c.saldo)}</div></div>
@@ -380,7 +382,7 @@ function RecordatoriosVacunas({ alertas, onClose }) {
     <Modal title="Recordatorios de vacunas" onClose={onClose}>
       <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Mascotas con vacuna próxima o vencida. Envía el aviso al dueño con un toque.</p>
       {alertas.length === 0 ? <Empty texto="Ninguna vacuna próxima o vencida. 🎉" /> : alertas.map((a) => {
-        const tel = (a.cliente.telefono || "").replace(/\D/g, "");
+        const tel = waTel(a.cliente.telefono);
         return (
           <Row key={a.id} between style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
             <div><b style={{ fontSize: 14 }}>{a.mascota.nombre} · {a.titulo}</b><div style={{ fontSize: 12, color: a.dias < 0 ? T.danger : T.pend }}>{estadoTxt(a.dias)} · {a.cliente.nombre}</div></div>
@@ -465,28 +467,35 @@ function AdminPanel({ datos, onClose }) {
 }
 
 /* ====================== AGENDA ====================== */
-function Agenda({ mascotas, servicios, citas }) {
+function Agenda({ mascotas, servicios, citas, movs }) {
   const [offset, setOffset] = useState(0);
   const [form, setForm] = useState(null);
   const base = inicioSemana(new Date()); base.setDate(base.getDate() + offset * 7);
   const dias = [...Array(7)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return d; });
   const nombreMascota = (id) => (mascotas.find((m) => m.id === id) || {}).nombre || "—";
 
-  const avanzar = async (c) => { if (["solicitado", "rechazado"].includes(c.estado || "agendado")) return; const orden = { agendado: "en_curso", en_curso: "completado", completado: "agendado" }; await updateDoc(doc(db, "citas", c.id), { estado: orden[c.estado || "agendado"] }); };
   const confirmar = async (c) => { await updateDoc(doc(db, "citas", c.id), { estado: "agendado" }); };
   const rechazar = async (c) => { if (confirm("¿Rechazar esta solicitud? Se le avisará al cliente.")) await updateDoc(doc(db, "citas", c.id), { estado: "rechazado" }); };
-  const facturar = async (c) => {
-    const serv = servicios.find((s) => s.mascotaId === c.mascotaId && s.tipo === c.tipoServicio) || servicios.find((s) => s.mascotaId === c.mascotaId);
-    if (!serv) return alert("Esta mascota no tiene una tarifa creada para facturar. Agrégala en su perfil.");
-    if (!confirm(`Facturar ${servInfo(c.tipoServicio).nombre} de ${nombreMascota(c.mascotaId)} por ${money(serv.valor)}?`)) return;
-    await addDoc(collection(db, "movimientos"), { kind: "cargo", mascotaId: c.mascotaId, servicioId: serv.id, tipoServicio: serv.tipo, modalidad: serv.modalidad, unidad: serv.unidad, fecha: c.fecha, cantidad: 1, monto: Number(serv.valor || 0), estado: "pendiente", notas: "Desde agenda", createdAt: Date.now() });
-    await updateDoc(doc(db, "citas", c.id), { facturado: true });
-    alert("Servicio facturado. Aparece en Servicios y en la factura del mes.");
-  };
-  const borrar = async (c) => { if (confirm("¿Eliminar esta cita?")) await deleteDoc(doc(db, "citas", c.id)); };
+  const borrar = async (c) => { if (confirm("¿Eliminar esta cita?")) { for (const m of movs.filter((x) => x.citaId === c.id)) await deleteDoc(doc(db, "movimientos", m.id)); await deleteDoc(doc(db, "citas", c.id)); } };
 
-  const colorEstado = (e) => e === "completado" ? T.ok : e === "en_curso" ? T.info : e === "solicitado" ? T.rustSoft : e === "rechazado" ? T.danger : T.pend;
-  const labelEstado = (e) => e === "completado" ? "Completado" : e === "en_curso" ? "En curso" : e === "solicitado" ? "Solicitado" : e === "rechazado" ? "Rechazada" : "Agendado";
+  // Completar = marcar completado y facturar automáticamente
+  const completar = async (c) => {
+    const serv = servicios.find((s) => s.mascotaId === c.mascotaId && s.tipo === c.tipoServicio) || servicios.find((s) => s.mascotaId === c.mascotaId);
+    if (serv && !movs.find((m) => m.citaId === c.id)) {
+      await addDoc(collection(db, "movimientos"), { kind: "cargo", citaId: c.id, mascotaId: c.mascotaId, servicioId: serv.id, tipoServicio: c.tipoServicio, modalidad: serv.modalidad, unidad: serv.unidad, fecha: c.fecha, cantidad: 1, monto: Number(serv.valor || 0), estado: "pendiente", notas: "Servicio agendado", createdAt: Date.now() });
+    }
+    await updateDoc(doc(db, "citas", c.id), { estado: "completado", facturado: !!serv });
+    if (!serv) alert("Cita completada. Aún no tiene tarifa, así que no se facturó: crea la tarifa en el perfil de la mascota.");
+  };
+  // Revertir a agendado = quitar la facturación automática
+  const revertir = async (c) => {
+    for (const m of movs.filter((x) => x.citaId === c.id)) await deleteDoc(doc(db, "movimientos", m.id));
+    await updateDoc(doc(db, "citas", c.id), { estado: "agendado", facturado: false });
+  };
+  const avanzar = (c) => { const e = c.estado || "agendado"; if (e === "agendado") completar(c); else if (e === "completado") revertir(c); };
+
+  const colorEstado = (e) => e === "completado" ? T.ok : e === "solicitado" ? T.rustSoft : e === "rechazado" ? T.danger : T.pend;
+  const labelEstado = (e) => e === "completado" ? "✓ Completado" : e === "solicitado" ? "Solicitado" : e === "rechazado" ? "Rechazada" : "Agendado";
   const solicitudes = citas.filter((c) => (c.estado || "agendado") === "solicitado").sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
 
   return (
@@ -540,9 +549,8 @@ function Agenda({ mascotas, servicios, citas }) {
                     ) : (
                       <Row between style={{ marginTop: 5 }}>
                         <button onClick={() => avanzar(c)} style={{ fontSize: 9.5, fontWeight: 700, color: colorEstado(est), background: "transparent", border: `1px solid ${colorEstado(est)}`, borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>{labelEstado(est)}</button>
-                        <Row style={{ gap: 2 }}>
-                          {est === "completado" && !c.facturado && <button onClick={() => facturar(c)} style={{ ...xBtn, color: T.tan, fontSize: 12 }} title="Facturar">💲</button>}
-                          {c.facturado && <span style={{ fontSize: 9.5, color: T.ok }}>✓ facturado</span>}
+                        <Row style={{ gap: 4, alignItems: "center" }}>
+                          {est === "completado" && c.facturado && <span style={{ fontSize: 9.5, color: T.ok }}>facturado</span>}
                           <button onClick={() => borrar(c)} style={{ ...xBtn, fontSize: 12 }}>✕</button>
                         </Row>
                       </Row>
@@ -554,7 +562,7 @@ function Agenda({ mascotas, servicios, citas }) {
           })}
         </div>
       </div>
-      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Las citas 🔔 son solicitudes de clientes por confirmar. Toca el estado para avanzar: Agendado → En curso → Completado. Una cita completada se puede facturar con 💲.</p>
+      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Las citas 🔔 son solicitudes de clientes por confirmar. Toca <b>Agendado</b> para marcar el servicio como <b>Completado</b>: se factura solo y aparece en Servicios y en la factura del mes.</p>
       {form && <FormCita mascotas={mascotas} onClose={() => setForm(null)} />}
     </div>
   );
@@ -618,7 +626,8 @@ function FormDueno({ inicial, onClose }) {
   return (
     <Modal title={editando ? "Editar cliente" : "Nuevo cliente"} onClose={onClose}>
       <Campo label="Nombre del cliente *" value={f.nombre} onChange={set("nombre")} /><div style={{ height: 10 }} />
-      <Grid2><Campo label="Teléfono" value={f.telefono} onChange={set("telefono")} ph="ej. 573001234567" /><Campo label="Correo" value={f.email} onChange={set("email")} /></Grid2>
+      <Grid2><Campo label="Teléfono" value={f.telefono} onChange={set("telefono")} ph="ej. 3001234567" /><Campo label="Correo" value={f.email} onChange={set("email")} /></Grid2>
+      <div style={{ fontSize: 11, color: T.dim, marginTop: 6 }}>El prefijo +57 (Colombia) se agrega automáticamente al enviar por WhatsApp.</div>
       <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={guardar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Guardando…" : "Guardar"}</button></Row>
     </Modal>
   );
@@ -648,7 +657,9 @@ function ClienteDetalle({ cliente, mascotas, servicios, movs, duenos, abrirMasco
       <Card style={{ marginTop: 16 }}>
         <Row between style={{ flexWrap: "wrap", gap: 10 }}>
           <div><Label>Factura del mes (todas las mascotas)</Label><div style={{ fontSize: 22, fontWeight: 800, color: T.tan, marginTop: 4 }}>{money(tMes.facturado)} <span style={{ fontSize: 13, color: tMes.saldo > 0 ? T.pend : T.ok, fontWeight: 600 }}>· saldo {money(Math.abs(tMes.saldo))}</span></div></div>
-          <Row style={{ gap: 8, flexWrap: "wrap" }}><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Generar factura</button></Row>
+          <Row style={{ gap: 8, flexWrap: "wrap" }}><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
+            {tMes.saldo > 0 && <button onClick={async () => { const pend = movsCliente.filter((m) => mesDe(m.fecha) === mes && esCargo(m) && !pagado(m)); if (!pend.length) return; if (!confirm(`¿Marcar como PAGADOS los ${pend.length} servicios pendientes de ${cliente.nombre} en ${nombreMes(mes)}?`)) return; for (const m of pend) await updateDoc(doc(db, "movimientos", m.id), { estado: "pagado" }); }} style={{ ...btnPrim, background: `linear-gradient(180deg,#86d18e,${T.ok})`, color: "#0e2412" }}>💵 Pagar todo</button>}
+            <button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Generar factura</button></Row>
         </Row>
       </Card>
       <Card style={{ marginTop: 16 }}>
@@ -671,7 +682,7 @@ function ClienteDetalle({ cliente, mascotas, servicios, movs, duenos, abrirMasco
 function CompartirCliente({ cliente, onClose }) {
   const link = `${window.location.origin}${window.location.pathname}?cliente=${cliente.id}`;
   const [copiado, setCopiado] = useState(false);
-  const tel = (cliente.telefono || "").replace(/\D/g, "");
+  const tel = waTel(cliente.telefono);
   const msgWA = `Hola ${cliente.nombre} 🐾 Este es tu acceso personal a ADOLF.\n\nDesde este enlace puedes:\n• Agendar paseos, baños y hotel\n• Ver la información de tus mascotas\n• Consultar tus servicios, facturas y saldos\n• Recibir avisos cuando confirmemos tus citas\n\nGuárdalo, es solo para ti:\n${link}`;
   return (
     <Modal title="Compartir con el cliente" onClose={onClose}>
@@ -719,6 +730,12 @@ function MascotaDetalle({ mascota, duenos, servicios, movs, salud, onBack }) {
   const susSalud = salud.filter((s) => s.mascotaId === mascota.id).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   const movsMes = susMovs.filter((m) => mesDe(m.fecha) === mes);
   const t = totales(movsMes);
+  const pagarTodo = async () => {
+    const pend = movsMes.filter((m) => esCargo(m) && !pagado(m));
+    if (!pend.length) return alert("No hay servicios pendientes este periodo.");
+    if (!confirm(`¿Marcar como PAGADOS los ${pend.length} servicios pendientes de ${mascota.nombre} en ${nombreMes(mes)}? (Total ${money(pend.reduce((a, m) => a + Number(m.monto || 0), 0))})`)) return;
+    for (const m of pend) await updateDoc(doc(db, "movimientos", m.id), { estado: "pagado" });
+  };
   const mesesDisp = useMemo(() => { const s = new Set(susMovs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [susMovs]);
   const borrar = async () => { if (!confirm(`¿Eliminar a ${mascota.nombre}?`)) return; for (const s of sus) await deleteDoc(doc(db, "servicios", s.id)); for (const m of susMovs) await deleteDoc(doc(db, "movimientos", m.id)); for (const s of susSalud) await deleteDoc(doc(db, "salud", s.id)); await deleteDoc(doc(db, "mascotas", mascota.id)); onBack(); };
   return (
@@ -738,7 +755,10 @@ function MascotaDetalle({ mascota, duenos, servicios, movs, salud, onBack }) {
         <Stat label={t.saldo >= 0 ? "Saldo pendiente" : "Saldo a favor"} value={money(Math.abs(t.saldo))} accent={t.saldo > 0 ? T.pend : T.ok} sub={t.saldo > 0 ? "por cobrar" : "al día"} />
       </div>
 
-      <button onClick={() => setFactura(mes)} style={{ ...btnPrim, marginTop: 16 }}>🧾 Generar factura del periodo</button>
+      <Row style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setFactura(mes)} style={btnPrim}>🧾 Generar factura del periodo</button>
+        {t.saldo > 0 && <button onClick={pagarTodo} style={{ ...btnPrim, background: `linear-gradient(180deg,#86d18e,${T.ok})`, color: "#0e2412" }}>💵 Pagar todo ({money(t.saldo)})</button>}
+      </Row>
 
       <Card style={{ marginTop: 16 }}>
         <Row between><H2>Servicios y tarifas</H2><button onClick={() => setFormServ({})} style={btnSmall}>+ Agregar servicio</button></Row>
@@ -860,16 +880,40 @@ function Factura({ cliente, grupos, mes, onClose }) {
   const facturado = grupos.reduce((a, g) => a + sum(g.cargos), 0);
   const cobrado = grupos.reduce((a, g) => a + sum(g.cargos.filter(pagado)) + sum(g.abonos), 0);
   const saldo = facturado - cobrado;
-  const tel = (cliente.telefono || "").replace(/\D/g, "");
+  const tel = waTel(cliente.telefono);
+
+  const plural = (u, n) => { if (n === 1) return u; const map = { hora: "horas", "sesión": "sesiones", noche: "noches" }; return map[u] || u + "s"; };
+  const resumir = (cargos) => {
+    const map = {};
+    cargos.forEach((c) => {
+      const k = c.tipoServicio + "|" + (c.modalidad || "unidad");
+      if (!map[k]) map[k] = { tipo: c.tipoServicio, modalidad: c.modalidad || "unidad", unidad: c.unidad || servInfo(c.tipoServicio).unidad, cantidad: 0, monto: 0, n: 0 };
+      map[k].cantidad += Number(c.cantidad || 1); map[k].monto += Number(c.monto || 0); map[k].n += 1;
+    });
+    return Object.values(map).sort((a, b) => b.monto - a.monto);
+  };
+  const detalleR = (r) => r.modalidad === "mensual" ? `${r.n} ${r.n === 1 ? "mes" : "meses"}` : `${r.cantidad} ${plural(r.unidad, r.cantidad)}`;
+
   const texto = () => {
     let t = `🐾 *ADOLF* — Estado de cuenta\n${nombreMes(mes)}\n\nCliente: ${cliente.nombre}\n`;
-    grupos.forEach((g) => { const lc = [...g.cargos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const la = [...g.abonos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); t += `\n${emojiMascota(g.mascota.tipo)} *${g.mascota.nombre}*\n`; lc.forEach((c) => { const i = servInfo(c.tipoServicio); t += `• ${c.fecha} ${i.nombre}${c.cantidad > 1 ? ` x${c.cantidad}` : ""}: ${money(c.monto)}${pagado(c) ? " ✓" : ""}\n`; }); la.forEach((a) => { t += `• ${a.fecha} Abono: ${money(a.monto)}\n`; }); });
+    grupos.forEach((g) => {
+      t += `\n${emojiMascota(g.mascota.tipo)} *${g.mascota.nombre}*\n`;
+      const rs = resumir(g.cargos); const ab = sum(g.abonos);
+      if (!rs.length && !ab) t += `• Sin movimientos\n`;
+      rs.forEach((r) => { t += `• ${servInfo(r.tipo).nombre}: ${detalleR(r)} — ${money(r.monto)}\n`; });
+      if (ab) t += `• Abonos/pagos: −${money(ab)}\n`;
+    });
     t += `\n*Total servicios: ${money(facturado)}*\n*Cobrado: ${money(cobrado)}*\n*SALDO ${saldo >= 0 ? "PENDIENTE" : "A FAVOR"}: ${money(Math.abs(saldo))}*`;
     t += `\n\n*Medios de pago*\n` + PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n");
     return t;
   };
   const imprimir = () => {
-    const secc = grupos.map((g) => { const lc = [...g.cargos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const la = [...g.abonos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const fc = lc.map((c) => { const i = servInfo(c.tipoServicio); return `<tr><td>${c.fecha}</td><td>${i.nombre}${c.cantidad > 1 ? " x" + c.cantidad : ""}${c.notas ? " — " + c.notas : ""}</td><td class="r">${money(c.monto)}</td><td class="r">${pagado(c) ? "Pagado" : "Pendiente"}</td></tr>`; }).join(""); const fa = la.map((a) => `<tr><td>${a.fecha}</td><td>Abono${a.notas ? " — " + a.notas : ""}</td><td class="r">${money(a.monto)}</td><td class="r">—</td></tr>`).join(""); return `<h2>${emojiMascota(g.mascota.tipo)} ${g.mascota.nombre}</h2><table><thead><tr><th>Fecha</th><th>Concepto</th><th class="r">Valor</th><th class="r">Estado</th></tr></thead><tbody>${fc || '<tr><td colspan="4" style="color:#999">Sin servicios</td></tr>'}${fa}</tbody></table>`; }).join("");
+    const secc = grupos.map((g) => {
+      const rs = resumir(g.cargos); const ab = sum(g.abonos);
+      const fc = rs.map((r) => `<tr><td>${servInfo(r.tipo).nombre}</td><td class="r">${detalleR(r)}</td><td class="r">${money(r.monto)}</td></tr>`).join("");
+      const fa = ab ? `<tr><td>Abonos / pagos</td><td class="r">—</td><td class="r">− ${money(ab)}</td></tr>` : "";
+      return `<h2>${emojiMascota(g.mascota.tipo)} ${g.mascota.nombre}</h2><table><thead><tr><th>Servicio</th><th class="r">Cantidad</th><th class="r">Total</th></tr></thead><tbody>${fc || '<tr><td colspan="3" style="color:#999">Sin servicios</td></tr>'}${fa}</tbody></table>`;
+    }).join("");
     const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Factura ${cliente.nombre}</title><style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:660px;margin:0 auto}.head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:14px}.brand{font-size:34px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}.meta{text-align:right;font-size:12px;color:#555;line-height:1.6}h2{font-size:15px;margin:20px 0 6px}.cli{font-size:14px;margin-top:14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eee}th{font-size:11px;text-transform:uppercase;color:#999}.r{text-align:right}.tot{margin-top:22px;margin-left:auto;width:300px;font-size:14px}.tot div{display:flex;justify-content:space-between;padding:6px 0}.tot .big{border-top:2px solid #1c1712;margin-top:6px;padding-top:10px;font-size:19px;font-weight:800}.pend{color:#c47d10}.fav{color:#2f8f3a}.pagos{margin-top:22px;padding:12px 14px;background:#faf3ea;border:1px solid #ecd9c2;border-radius:10px;font-size:13px;line-height:1.7}.pagos b.t{display:block;color:#d2772f;text-transform:uppercase;font-size:11px;letter-spacing:.5px;margin-bottom:4px}.foot{margin-top:24px;text-align:center;font-weight:800;letter-spacing:3px;font-size:18px}</style></head><body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div class="meta"><b>Estado de cuenta</b><br>${nombreMes(mes)}<br>Emitido: ${hoy()}</div></div><div class="cli"><b>Cliente:</b> ${cliente.nombre}${cliente.telefono ? " · " + cliente.telefono : ""}</div>${secc}<div class="tot"><div><span>Total servicios</span><b>${money(facturado)}</b></div><div><span>Cobrado</span><b>− ${money(cobrado)}</b></div><div class="big ${saldo >= 0 ? "pend" : "fav"}"><span>Saldo ${saldo >= 0 ? "pendiente" : "a favor"}</span><span>${money(Math.abs(saldo))}</span></div></div><div class="pagos"><b class="t">Medios de pago</b>${PAGOS.map((p) => `${p.label}: <b>${p.valor}</b>`).join("<br>")}</div><div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
     const w = window.open("", "_blank"); if (!w) return alert("Permite las ventanas emergentes."); w.document.write(html); w.document.close();
   };
@@ -878,9 +922,12 @@ function Factura({ cliente, grupos, mes, onClose }) {
       <div className="seleccionable" style={{ background: "#fff", color: "#1c1712", borderRadius: 12, padding: 18, maxHeight: "52vh", overflowY: "auto" }}>
         <Row between style={{ borderBottom: "3px solid #d2772f", paddingBottom: 10, alignItems: "flex-start" }}><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, letterSpacing: 2 }}>ADOLF</div><div style={{ fontSize: 10.5, color: "#d2772f", fontWeight: 700, marginTop: 2 }}>{TAGLINE}</div></div><div style={{ textAlign: "right", fontSize: 11, color: "#666" }}><b>Estado de cuenta</b><br />{nombreMes(mes)}</div></Row>
         <div style={{ fontSize: 13, marginTop: 12 }}><b>Cliente:</b> {cliente.nombre}{cliente.telefono ? " · " + cliente.telefono : ""}</div>
-        {grupos.map((g) => { const lc = [...g.cargos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); const la = [...g.abonos].sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")); return (
+        {grupos.map((g) => { const rs = resumir(g.cargos); const ab = sum(g.abonos); return (
           <div key={g.mascota.id} style={{ marginTop: 14 }}><div style={{ fontSize: 14, fontWeight: 800 }}>{emojiMascota(g.mascota.tipo)} {g.mascota.nombre}</div>
-            {lc.length === 0 && la.length === 0 ? <div style={{ color: "#999", fontSize: 13 }}>Sin movimientos</div> : <>{lc.map((c) => { const i = servInfo(c.tipoServicio); return <Row key={c.id} between style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid #eee" }}><span>{c.fecha} · {i.nombre}{c.cantidad > 1 ? ` x${c.cantidad}` : ""} {pagado(c) ? <span style={{ color: "#2f8f3a" }}>✓</span> : <span style={{ color: "#c47d10", fontSize: 11 }}>pend.</span>}</span><b>{money(c.monto)}</b></Row>; })}{la.map((a) => <Row key={a.id} between style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid #eee", color: "#2f8f3a" }}><span>{a.fecha} · Abono</span><b>− {money(a.monto)}</b></Row>)}</>}
+            {rs.length === 0 && !ab ? <div style={{ color: "#999", fontSize: 13 }}>Sin movimientos</div> : <>
+              {rs.map((r, idx) => { const i = servInfo(r.tipo); return <Row key={idx} between style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid #eee" }}><span>{i.icon} {i.nombre} · <b style={{ fontWeight: 600 }}>{detalleR(r)}</b></span><b>{money(r.monto)}</b></Row>; })}
+              {ab ? <Row between style={{ fontSize: 13, padding: "5px 0", borderBottom: "1px solid #eee", color: "#2f8f3a" }}><span>Abonos / pagos</span><b>− {money(ab)}</b></Row> : null}
+            </>}
           </div>); })}
         <div style={{ marginTop: 16, fontSize: 14 }}><Row between style={{ padding: "3px 0" }}><span>Total servicios</span><b>{money(facturado)}</b></Row><Row between style={{ padding: "3px 0" }}><span>Cobrado</span><b>− {money(cobrado)}</b></Row><Row between style={{ borderTop: "2px solid #1c1712", marginTop: 6, paddingTop: 8, fontSize: 17, fontWeight: 800, color: saldo >= 0 ? "#c47d10" : "#2f8f3a" }}><span>Saldo {saldo >= 0 ? "pendiente" : "a favor"}</span><span>{money(Math.abs(saldo))}</span></Row></div>
         <div style={{ marginTop: 14, background: "#faf3ea", border: "1px solid #ecd9c2", borderRadius: 10, padding: "12px 14px" }}>
@@ -896,18 +943,62 @@ function Factura({ cliente, grupos, mes, onClose }) {
 
 /* ====================== SERVICIOS (global) ====================== */
 function Servicios({ mascotas, servicios, movs }) {
-  const [mes, setMes] = useState(mesActual()), [tipo, setTipo] = useState("todos"), [form, setForm] = useState(false), [abono, setAbono] = useState(false);
+  const [mes, setMes] = useState(mesActual());
+  const [estadoF, setEstadoF] = useState("todos"); // todos | pendientes | pagados
+  const [abierto, setAbierto] = useState({});
+  const [form, setForm] = useState(false), [abono, setAbono] = useState(false);
   const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
-  const lista = movs.filter((m) => mesDe(m.fecha) === mes).filter((m) => tipo === "todos" || (tipo === "abono" ? esAbono(m) : esCargo(m))).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
   const nombreMascota = (id) => (mascotas.find((m) => m.id === id) || {}).nombre || "—";
-  const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
+  const delMes = movs.filter((m) => mesDe(m.fecha) === mes);
+  const t = totales(delMes);
+  const toggle = (k) => setAbierto((p) => ({ ...p, [k]: !p[k] }));
+
+  const cargosF = delMes.filter(esCargo).filter((c) => estadoF === "todos" ? true : estadoF === "pagados" ? pagado(c) : !pagado(c));
+  const grupos = SERVICIOS.map((s) => {
+    const items = cargosF.filter((c) => c.tipoServicio === s.id).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+    const total = items.reduce((a, m) => a + Number(m.monto || 0), 0);
+    const pend = items.filter((c) => !pagado(c)).reduce((a, m) => a + Number(m.monto || 0), 0);
+    return { ...s, items, total, pend };
+  }).filter((g) => g.items.length);
+  const abonos = delMes.filter(esAbono).sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  const mostrarAbonos = estadoF !== "pendientes" && abonos.length > 0;
+
+  const Seccion = ({ k, icon, nombre, n, total, pend, children }) => (
+    <div style={{ border: `1px solid ${T.line}`, borderRadius: 12, marginBottom: 10, overflow: "hidden", background: T.surface2 }}>
+      <button onClick={() => toggle(k)} style={{ width: "100%", background: "transparent", border: "none", color: T.text, padding: "13px 14px", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left" }}>
+        <span style={{ fontSize: 20, width: 26, textAlign: "center" }}>{icon}</span>
+        <span style={{ flex: 1, minWidth: 0 }}><span style={{ fontWeight: 700, fontSize: 14, color: T.cream }}>{nombre}</span><span style={{ fontSize: 11.5, color: T.muted }}> · {n} {n === 1 ? "registro" : "registros"}</span>{pend > 0 && <span style={{ fontSize: 11.5, color: T.pend }}> · {money(pend)} por cobrar</span>}</span>
+        <b style={{ fontVariantNumeric: "tabular-nums", color: T.tan }}>{money(total)}</b>
+        <span style={{ color: T.dim, fontSize: 13, transform: abierto[k] ? "rotate(180deg)" : "none", transition: "transform .15s" }}>▾</span>
+      </button>
+      {abierto[k] && <div style={{ padding: "0 14px 8px", borderTop: `1px solid ${T.line}` }}>{children}</div>}
+    </div>
+  );
+
   return (
     <div style={{ animation: "pop .35s ease" }}>
       <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Servicios y pagos</H1><Row style={{ gap: 8 }}><button onClick={() => setAbono(true)} style={{ ...btnPrim, background: "transparent", color: T.ok, border: `1px solid ${T.ok}` }} disabled={mascotas.length === 0}>+ Abono</button><button onClick={() => setForm(true)} style={btnPrim} disabled={servicios.length === 0}>+ Servicio</button></Row></Row>
-      <Row style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><div style={{ display: "flex", gap: 4, background: T.surface, borderRadius: 12, padding: 4, border: `1px solid ${T.line}` }}>{[["todos","Todos"],["cargo","Servicios"],["abono","Abonos"]].map(([k, l]) => <button key={k} onClick={() => setTipo(k)} style={tab(tipo === k)}>{l}</button>)}</div>
+      <Row style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+        <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
+        <div style={{ display: "flex", gap: 4, background: T.surface, borderRadius: 12, padding: 4, border: `1px solid ${T.line}` }}>{[["todos", "Todos"], ["pendientes", "Por cobrar"], ["pagados", "Pagados"]].map(([k, l]) => <button key={k} onClick={() => setEstadoF(k)} style={tab(estadoF === k)}>{l}</button>)}</div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}><span style={{ fontSize: 13 }}>Facturado: <b style={{ color: T.tan }}>{money(t.facturado)}</b></span><span style={{ fontSize: 13 }}>Cobrado: <b style={{ color: T.ok }}>{money(t.cobrado)}</b></span><span style={{ fontSize: 13 }}>Saldo: <b style={{ color: t.saldo > 0 ? T.pend : T.ok }}>{money(Math.abs(t.saldo))}</b></span></div>
       </Row>
-      <Card style={{ marginTop: 16 }}>{lista.length === 0 ? <Empty texto="Sin movimientos este periodo." /> : <TablaMovs movs={lista} mostrarMascota nombreMascota={nombreMascota} />}</Card>
+
+      <div style={{ marginTop: 16 }}>
+        {grupos.length === 0 && !mostrarAbonos ? <Card><Empty texto="Sin movimientos para este filtro." /></Card> : <>
+          {grupos.map((g) => (
+            <Seccion key={g.id} k={g.id} icon={g.icon} nombre={g.nombre} n={g.items.length} total={g.total} pend={g.pend}>
+              <TablaMovs movs={g.items} mostrarMascota nombreMascota={nombreMascota} />
+            </Seccion>
+          ))}
+          {mostrarAbonos && (
+            <Seccion k="_abonos" icon="💵" nombre="Abonos / pagos recibidos" n={abonos.length} total={abonos.reduce((a, m) => a + Number(m.monto || 0), 0)} pend={0}>
+              <TablaMovs movs={abonos} mostrarMascota nombreMascota={nombreMascota} />
+            </Seccion>
+          )}
+        </>}
+      </div>
+
       {form && <FormMovimiento servicios={servicios} todasMascotas={mascotas} onClose={() => setForm(false)} />}
       {abono && <FormAbono todasMascotas={mascotas} onClose={() => setAbono(false)} />}
     </div>
@@ -951,7 +1042,6 @@ function VistaCliente({ duenoId }) {
       } else if (antes !== ahora) {
         if (ahora === "agendado") noti.push({ titulo: "¡Tu cita fue confirmada! ✅", detalle: base });
         else if (ahora === "rechazado") noti.push({ titulo: "Solicitud no confirmada ❌", detalle: `${base} — escríbenos para reagendar` });
-        else if (ahora === "en_curso") noti.push({ titulo: "Tu servicio está en curso 🐾", detalle: base });
         else if (ahora === "completado") noti.push({ titulo: "Servicio completado ✅", detalle: base });
       }
     });
