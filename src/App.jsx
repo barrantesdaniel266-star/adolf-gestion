@@ -472,8 +472,9 @@ function Agenda({ mascotas, servicios, citas }) {
   const dias = [...Array(7)].map((_, i) => { const d = new Date(base); d.setDate(d.getDate() + i); return d; });
   const nombreMascota = (id) => (mascotas.find((m) => m.id === id) || {}).nombre || "—";
 
-  const avanzar = async (c) => { if ((c.estado || "agendado") === "solicitado") return; const orden = { agendado: "en_curso", en_curso: "completado", completado: "agendado" }; await updateDoc(doc(db, "citas", c.id), { estado: orden[c.estado || "agendado"] }); };
+  const avanzar = async (c) => { if (["solicitado", "rechazado"].includes(c.estado || "agendado")) return; const orden = { agendado: "en_curso", en_curso: "completado", completado: "agendado" }; await updateDoc(doc(db, "citas", c.id), { estado: orden[c.estado || "agendado"] }); };
   const confirmar = async (c) => { await updateDoc(doc(db, "citas", c.id), { estado: "agendado" }); };
+  const rechazar = async (c) => { if (confirm("¿Rechazar esta solicitud? Se le avisará al cliente.")) await updateDoc(doc(db, "citas", c.id), { estado: "rechazado" }); };
   const facturar = async (c) => {
     const serv = servicios.find((s) => s.mascotaId === c.mascotaId && s.tipo === c.tipoServicio) || servicios.find((s) => s.mascotaId === c.mascotaId);
     if (!serv) return alert("Esta mascota no tiene una tarifa creada para facturar. Agrégala en su perfil.");
@@ -484,8 +485,8 @@ function Agenda({ mascotas, servicios, citas }) {
   };
   const borrar = async (c) => { if (confirm("¿Eliminar esta cita?")) await deleteDoc(doc(db, "citas", c.id)); };
 
-  const colorEstado = (e) => e === "completado" ? T.ok : e === "en_curso" ? T.info : e === "solicitado" ? T.rustSoft : T.pend;
-  const labelEstado = (e) => e === "completado" ? "Completado" : e === "en_curso" ? "En curso" : e === "solicitado" ? "Solicitado" : "Agendado";
+  const colorEstado = (e) => e === "completado" ? T.ok : e === "en_curso" ? T.info : e === "solicitado" ? T.rustSoft : e === "rechazado" ? T.danger : T.pend;
+  const labelEstado = (e) => e === "completado" ? "Completado" : e === "en_curso" ? "En curso" : e === "solicitado" ? "Solicitado" : e === "rechazado" ? "Rechazada" : "Agendado";
   const solicitudes = citas.filter((c) => (c.estado || "agendado") === "solicitado").sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
 
   return (
@@ -500,7 +501,7 @@ function Agenda({ mascotas, servicios, citas }) {
               <div style={{ fontSize: 13.5 }}>{inf.icon} {nombreMascota(c.mascotaId)} · {inf.nombre}<div style={{ fontSize: 11.5, color: T.muted }}>{c.fecha} {c.hora}{c.nota ? ` · ${c.nota}` : ""}</div></div>
               <Row style={{ gap: 6 }}>
                 <button onClick={() => confirmar(c)} style={{ ...btnSmall, background: `linear-gradient(180deg,#86d18e,${T.ok})`, color: "#0e2412" }}>✓ Confirmar</button>
-                <button onClick={() => borrar(c)} style={{ ...btnGhost, color: T.danger, borderColor: "#4a2a22", padding: "7px 10px", fontSize: 12.5 }}>Rechazar</button>
+                <button onClick={() => rechazar(c)} style={{ ...btnGhost, color: T.danger, borderColor: "#4a2a22", padding: "7px 10px", fontSize: 12.5 }}>Rechazar</button>
               </Row>
             </Row>
           ); })}
@@ -521,15 +522,20 @@ function Agenda({ mascotas, servicios, citas }) {
             return (
               <div key={i} style={{ background: esHoy ? "#33271a" : T.card, border: `1px solid ${esHoy ? T.rust : T.line}`, borderRadius: 13, padding: 10, minHeight: 160 }}>
                 <div style={{ textAlign: "center", paddingBottom: 8, borderBottom: `1px solid ${T.line}`, marginBottom: 8 }}><div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase" }}>{DIAS[i]}</div><div style={{ fontSize: 18, fontWeight: 800, color: esHoy ? T.rust : T.cream }}>{d.getDate()}</div></div>
-                {delDia.length === 0 ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; const esSol = est === "solicitado"; return (
-                  <div key={c.id} style={{ background: T.surface2, border: esSol ? `1px dashed ${T.rust}` : `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 8, padding: "7px 8px", marginBottom: 6 }}>
+                {delDia.length === 0 ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; const esSol = est === "solicitado"; const esRec = est === "rechazado"; return (
+                  <div key={c.id} style={{ background: T.surface2, border: esSol ? `1px dashed ${T.rust}` : `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 8, padding: "7px 8px", marginBottom: 6, opacity: esRec ? .6 : 1 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: T.cream }}>{c.hora || "--:--"} {inf.icon}{esSol && " 🔔"}</div>
-                    <div style={{ fontSize: 12, color: T.text }}>{nombreMascota(c.mascotaId)}</div>
+                    <div style={{ fontSize: 12, color: T.text, textDecoration: esRec ? "line-through" : "none" }}>{nombreMascota(c.mascotaId)}</div>
                     <div style={{ fontSize: 10.5, color: T.muted }}>{inf.nombre}{c.nota ? ` · ${c.nota}` : ""}</div>
                     {esSol ? (
                       <Row style={{ marginTop: 5, gap: 4 }}>
                         <button onClick={() => confirmar(c)} style={{ fontSize: 9.5, fontWeight: 700, color: T.ok, background: "transparent", border: `1px solid ${T.ok}`, borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>✓ Confirmar</button>
-                        <button onClick={() => borrar(c)} style={{ ...xBtn, fontSize: 12 }} title="Rechazar">✕</button>
+                        <button onClick={() => rechazar(c)} style={{ ...xBtn, fontSize: 12 }} title="Rechazar">✕</button>
+                      </Row>
+                    ) : esRec ? (
+                      <Row between style={{ marginTop: 5 }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 700, color: T.danger }}>Rechazada</span>
+                        <button onClick={() => borrar(c)} style={{ ...xBtn, fontSize: 12 }} title="Eliminar">✕</button>
                       </Row>
                     ) : (
                       <Row between style={{ marginTop: 5 }}>
@@ -939,8 +945,15 @@ function VistaCliente({ duenoId }) {
     mis.forEach((c) => {
       const antes = prevEst.current.get(c.id); const ahora = c.estado || "agendado";
       const m = mascotas.find((x) => x.id === c.mascotaId); const inf = servInfo(c.tipoServicio);
-      if (antes && antes !== ahora && ahora === "agendado") noti.push({ titulo: "¡Tu cita fue confirmada! ✅", detalle: `${m ? m.nombre : ""} · ${inf.nombre} · ${c.fecha} ${c.hora}` });
-      else if (!antes && ahora === "agendado") noti.push({ titulo: "Nueva cita agendada 📅", detalle: `${m ? m.nombre : ""} · ${inf.nombre} · ${c.fecha} ${c.hora}` });
+      const base = `${m ? m.nombre : ""} · ${inf.nombre} · ${c.fecha} ${c.hora}`;
+      if (!antes) {
+        if (ahora === "agendado") noti.push({ titulo: "Nueva cita agendada 📅", detalle: base });
+      } else if (antes !== ahora) {
+        if (ahora === "agendado") noti.push({ titulo: "¡Tu cita fue confirmada! ✅", detalle: base });
+        else if (ahora === "rechazado") noti.push({ titulo: "Solicitud no confirmada ❌", detalle: `${base} — escríbenos para reagendar` });
+        else if (ahora === "en_curso") noti.push({ titulo: "Tu servicio está en curso 🐾", detalle: base });
+        else if (ahora === "completado") noti.push({ titulo: "Servicio completado ✅", detalle: base });
+      }
     });
     prevEst.current = map;
   }, [citas, mascotas]);
@@ -975,18 +988,18 @@ function VistaCliente({ duenoId }) {
 
         {(() => {
           const misCitas = citas.filter((c) => sus.find((m) => m.id === c.mascotaId) && c.fecha >= hoy() && (c.estado || "agendado") !== "completado").sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora));
-          const estadoCli = (e) => e === "solicitado" ? "Pendiente de confirmar" : e === "agendado" ? "Confirmada" : e === "en_curso" ? "En curso" : "Completada";
-          const colorCli = (e) => e === "agendado" ? T.ok : e === "en_curso" ? T.info : T.pend;
+          const estadoCli = (e) => e === "solicitado" ? "Pendiente de confirmar" : e === "agendado" ? "Confirmada" : e === "en_curso" ? "En curso" : e === "rechazado" ? "No disponible" : "Completada";
+          const colorCli = (e) => e === "agendado" ? T.ok : e === "en_curso" ? T.info : e === "rechazado" ? T.danger : T.pend;
           if (misCitas.length === 0) return null;
           return (
             <Card style={{ marginTop: 16 }}>
               <H2>📅 Mis próximas citas</H2>
               {misCitas.map((c, i) => { const inf = servInfo(c.tipoServicio); const m = mascotas.find((x) => x.id === c.mascotaId) || {}; const est = c.estado || "agendado"; return (
-                <Row key={c.id} between style={{ padding: "10px 0", borderBottom: i < misCitas.length - 1 ? `1px solid ${T.line}` : "none", gap: 8, flexWrap: "wrap" }}>
+                <Row key={c.id} between style={{ padding: "10px 0", borderBottom: i < misCitas.length - 1 ? `1px solid ${T.line}` : "none", gap: 8, flexWrap: "wrap", opacity: est === "rechazado" ? .7 : 1 }}>
                   <div style={{ fontSize: 13.5 }}>{inf.icon} {m.nombre} · {inf.nombre}<div style={{ fontSize: 11.5, color: T.muted }}>{c.fecha} {c.hora}</div></div>
                   <Row style={{ gap: 8 }}>
                     <span style={{ ...badge, background: T.surface2, color: colorCli(est), borderColor: colorCli(est) }}>{estadoCli(est)}</span>
-                    {est === "solicitado" && <button onClick={async () => { if (confirm("¿Cancelar esta solicitud?")) await deleteDoc(doc(db, "citas", c.id)); }} style={xBtn}>✕</button>}
+                    {(est === "solicitado" || est === "rechazado") && <button onClick={async () => { if (confirm(est === "solicitado" ? "¿Cancelar esta solicitud?" : "¿Quitar de la lista?")) await deleteDoc(doc(db, "citas", c.id)); }} style={xBtn}>✕</button>}
                   </Row>
                 </Row>
               ); })}
