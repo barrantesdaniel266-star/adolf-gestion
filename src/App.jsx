@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { db } from "./firebase";
 import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy,
@@ -17,7 +17,6 @@ const T = {
 };
 const display = "'Barlow Condensed', system-ui, sans-serif";
 const TAGLINE = "🐾 Bienestar y mantenimiento para tu mascota";
-const TIMEOUT_MIN = 20;
 
 // Medios de pago que aparecen en la factura (edítalos aquí cuando cambien)
 const PAGOS = [
@@ -82,21 +81,103 @@ function GlobalCSS() {
   return (<style>{`
     * { -webkit-user-select: none; -ms-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
     input, textarea, select, [contenteditable="true"], .seleccionable { -webkit-user-select: text; -ms-user-select: text; user-select: text; }
-    input, select, textarea { color-scheme: dark; }
+    input, select, textarea { color-scheme: dark; transition: border-color .14s ease; }
     select option { background: ${T.surface}; color: ${T.text}; }
+    html { scroll-behavior: smooth; }
+    button { transition: filter .12s ease, transform .08s ease, opacity .12s ease; }
+    button:hover:not(:disabled) { filter: brightness(1.09); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    a { transition: opacity .12s ease; }
+    @keyframes pop { from { opacity:0; transform: translateY(8px) scale(.98);} to {opacity:1; transform:none;} }
+    @keyframes slideIn { from { opacity:0; transform: translateX(30px);} to {opacity:1; transform:none;} }
   `}</style>);
+}
+
+/* ====================== NOTIFICACIONES ====================== */
+let _audioCtx;
+function _ctx() {
+  try { if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (_audioCtx.state === "suspended") _audioCtx.resume(); } catch { return null; }
+  return _audioCtx;
+}
+function sonarNoti() {
+  const ctx = _ctx(); if (!ctx) return;
+  const t = ctx.currentTime;
+  [[784, 0], [1047, 0.12], [1319, 0.24]].forEach(([f, off]) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "sine"; o.frequency.value = f; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.0001, t + off);
+    g.gain.exponentialRampToValueAtTime(0.22, t + off + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + off + 0.22);
+    o.start(t + off); o.stop(t + off + 0.24);
+  });
+}
+function pedirPermisoNoti() { try { if ("Notification" in window && Notification.permission === "default") Notification.requestPermission(); } catch {} }
+function notiNavegador(titulo, cuerpo) { try { if ("Notification" in window && Notification.permission === "granted") new Notification(titulo, { body: cuerpo, icon: logo }); } catch {} }
+function tiempoRelativo(ts) { const s = Math.floor((Date.now() - ts) / 1000); if (s < 60) return "hace un momento"; const m = Math.floor(s / 60); if (m < 60) return `hace ${m} min`; const h = Math.floor(m / 60); if (h < 24) return `hace ${h} h`; return `hace ${Math.floor(h / 24)} d`; }
+
+function useNotis(storageKey) {
+  const [notis, setNotis] = useState(() => { try { return JSON.parse(localStorage.getItem(storageKey) || "[]"); } catch { return []; } });
+  const [toast, setToast] = useState(null);
+  useEffect(() => {
+    pedirPermisoNoti();
+    const unlock = () => { _ctx(); window.removeEventListener("pointerdown", unlock); };
+    window.addEventListener("pointerdown", unlock);
+    return () => window.removeEventListener("pointerdown", unlock);
+  }, []);
+  const push = (noti) => {
+    const n = { id: Date.now() + "_" + Math.random().toString(36).slice(2, 6), ts: Date.now(), leida: false, ...noti };
+    setNotis((prev) => { const arr = [n, ...prev].slice(0, 40); try { localStorage.setItem(storageKey, JSON.stringify(arr)); } catch {} return arr; });
+    setToast(n); sonarNoti(); notiNavegador(noti.titulo, noti.detalle);
+  };
+  const marcarLeidas = () => setNotis((prev) => { const arr = prev.map((x) => ({ ...x, leida: true })); try { localStorage.setItem(storageKey, JSON.stringify(arr)); } catch {} return arr; });
+  const noLeidas = notis.filter((n) => !n.leida).length;
+  return { notis, push, marcarLeidas, noLeidas, toast, cerrarToast: () => setToast(null) };
+}
+
+function Campana({ notis, noLeidas, marcarLeidas }) {
+  const [open, setOpen] = useState(false);
+  const toggle = () => { const n = !open; setOpen(n); if (n) setTimeout(marcarLeidas, 800); };
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={toggle} title="Notificaciones" style={{ ...btnGhost, padding: "8px 11px", position: "relative", fontSize: 16 }}>🔔
+        {noLeidas > 0 && <span style={{ position: "absolute", top: -5, right: -5, background: T.danger, color: "#fff", fontSize: 10, fontWeight: 800, minWidth: 18, height: 18, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px", border: `2px solid ${T.bg}` }}>{noLeidas}</span>}
+      </button>
+      {open && <>
+        <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }} />
+        <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 300, maxHeight: 400, overflowY: "auto", background: T.surface, border: `1px solid ${T.line2}`, borderRadius: 14, boxShadow: "0 16px 50px rgba(0,0,0,.5)", zIndex: 61, padding: 8, animation: "pop .2s ease" }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.muted, padding: "6px 8px", textTransform: "uppercase", letterSpacing: .5 }}>Notificaciones</div>
+          {notis.length === 0 ? <div style={{ padding: "22px 8px", textAlign: "center", color: T.dim, fontSize: 13 }}>Sin notificaciones todavía</div>
+            : notis.map((n) => (
+              <div key={n.id} style={{ padding: "9px 8px", borderTop: `1px solid ${T.line}`, background: n.leida ? "transparent" : "rgba(210,119,47,.07)", borderRadius: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{n.titulo}</div>
+                <div style={{ fontSize: 12, color: T.muted }}>{n.detalle}</div>
+                <div style={{ fontSize: 10.5, color: T.dim, marginTop: 2 }}>{tiempoRelativo(n.ts)}</div>
+              </div>
+            ))}
+        </div>
+      </>}
+    </div>
+  );
+}
+
+function Toast({ noti, onClose }) {
+  useEffect(() => { const t = setTimeout(onClose, 5500); return () => clearTimeout(t); }, [noti.id]);
+  return (
+    <div style={{ position: "fixed", top: 14, right: 14, zIndex: 95, maxWidth: 330, animation: "slideIn .3s ease" }}>
+      <div onClick={onClose} style={{ background: T.surface, border: `1px solid ${T.rust}`, borderLeft: `4px solid ${T.rust}`, borderRadius: 12, padding: "12px 16px", boxShadow: "0 14px 40px rgba(0,0,0,.5)", cursor: "pointer" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 700, color: T.cream }}>{noti.titulo}</div>
+        <div style={{ fontSize: 12.5, color: T.muted, marginTop: 2 }}>{noti.detalle}</div>
+      </div>
+    </div>
+  );
 }
 
 /* ====================== APP ====================== */
 export default function App() {
   const clienteId = new URLSearchParams(window.location.search).get("cliente");
-  const [logged, setLogged] = useState(() => {
-    const ok = localStorage.getItem("adolf_auth") === "1";
-    const last = Number(localStorage.getItem("adolf_last") || 0);
-    if (ok && Date.now() - last > TIMEOUT_MIN * 60000) { localStorage.removeItem("adolf_auth"); return false; }
-    return ok;
-  });
-  const entrar = () => { localStorage.setItem("adolf_auth", "1"); localStorage.setItem("adolf_last", String(Date.now())); setLogged(true); };
+  const [logged, setLogged] = useState(() => localStorage.getItem("adolf_auth") === "1");
+  const entrar = () => { localStorage.setItem("adolf_auth", "1"); setLogged(true); };
   const salir = () => { localStorage.removeItem("adolf_auth"); setLogged(false); };
   if (clienteId) return <><GlobalCSS /><VistaCliente duenoId={clienteId} /></>;
   if (!logged) return <><GlobalCSS /><Login onOk={entrar} /></>;
@@ -149,13 +230,19 @@ function Panel({ onLogout }) {
   const [clienteSel, setClienteSel] = useState(null);
   const [mascotaSel, setMascotaSel] = useState(null);
 
+  // Notificaciones: avisar cuando entra una nueva solicitud de reserva
+  const noti = useNotis("adolf_notis");
+  const prevSolic = useRef(null);
   useEffect(() => {
-    const marca = () => localStorage.setItem("adolf_last", String(Date.now())); marca();
-    const ev = ["mousemove", "keydown", "click", "touchstart", "scroll"];
-    ev.forEach((e) => window.addEventListener(e, marca, { passive: true }));
-    const t = setInterval(() => { if (Date.now() - Number(localStorage.getItem("adolf_last") || 0) > TIMEOUT_MIN * 60000) onLogout(); }, 20000);
-    return () => { ev.forEach((e) => window.removeEventListener(e, marca)); clearInterval(t); };
-  }, []);
+    const solic = citas.filter((c) => (c.estado || "agendado") === "solicitado");
+    const ids = new Set(solic.map((c) => c.id));
+    if (prevSolic.current === null) { prevSolic.current = ids; return; }
+    solic.filter((c) => !prevSolic.current.has(c.id)).forEach((c) => {
+      const m = mascotas.find((x) => x.id === c.mascotaId);
+      noti.push({ titulo: "Nueva solicitud de reserva 🔔", detalle: `${m ? m.nombre : "Mascota"} · ${servInfo(c.tipoServicio).nombre} · ${c.fecha} ${c.hora}` });
+    });
+    prevSolic.current = ids;
+  }, [citas]);
 
   const cliente = duenos.find((d) => d.id === clienteSel);
   const mascota = mascotas.find((m) => m.id === mascotaSel);
@@ -173,6 +260,7 @@ function Panel({ onLogout }) {
               <button key={k} onClick={() => reset(k)} style={tab(vista === k && !clienteSel && !mascotaSel)}>{l}</button>
             ))}
           </nav>
+          <Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} />
           <button onClick={onLogout} style={{ ...btnGhost, padding: "8px 12px" }}>Salir</button>
         </div>
       </header>
@@ -184,6 +272,7 @@ function Panel({ onLogout }) {
           : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} />
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
       </main>
+      {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} />}
     </div>
   );
 }
@@ -789,6 +878,23 @@ function VistaCliente({ duenoId }) {
   const [mes, setMes] = useState(mesActual()), [factura, setFactura] = useState(false), [zoom, setZoom] = useState(null), [cargando, setCargando] = useState(true);
   const [solicitar, setSolicitar] = useState(false);
   useEffect(() => { const t = setTimeout(() => setCargando(false), 1500); return () => clearTimeout(t); }, []);
+
+  // Notificaciones del cliente: avisar cuando su reserva es confirmada o agendada
+  const noti = useNotis("adolf_notis_cli_" + duenoId);
+  const prevEst = useRef(null);
+  useEffect(() => {
+    const susM = mascotas.filter((m) => m.duenoId === duenoId);
+    const mis = citas.filter((c) => susM.find((m) => m.id === c.mascotaId));
+    const map = new Map(mis.map((c) => [c.id, c.estado || "agendado"]));
+    if (prevEst.current === null) { prevEst.current = map; return; }
+    mis.forEach((c) => {
+      const antes = prevEst.current.get(c.id); const ahora = c.estado || "agendado";
+      const m = mascotas.find((x) => x.id === c.mascotaId); const inf = servInfo(c.tipoServicio);
+      if (antes && antes !== ahora && ahora === "agendado") noti.push({ titulo: "¡Tu cita fue confirmada! ✅", detalle: `${m ? m.nombre : ""} · ${inf.nombre} · ${c.fecha} ${c.hora}` });
+      else if (!antes && ahora === "agendado") noti.push({ titulo: "Nueva cita agendada 📅", detalle: `${m ? m.nombre : ""} · ${inf.nombre} · ${c.fecha} ${c.hora}` });
+    });
+    prevEst.current = map;
+  }, [citas, mascotas]);
   const cliente = duenos.find((d) => d.id === duenoId);
   const sus = mascotas.filter((m) => m.duenoId === duenoId);
   if (!cliente && cargando) return <Centro><div style={{ color: T.muted }}>Cargando…</div></Centro>;
@@ -798,7 +904,7 @@ function VistaCliente({ duenoId }) {
   const grupos = sus.map((m) => { const mm = movs.filter((x) => x.mascotaId === m.id && mesDe(x.fecha) === mes); return { mascota: m, cargos: mm.filter(esCargo), abonos: mm.filter(esAbono) }; }).filter((g) => g.cargos.length || g.abonos.length);
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
-      <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div></div></header>
+      <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div><div style={{ marginLeft: "auto" }}><Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} /></div></div></header>
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "22px 18px 80px" }}>
         <Row between style={{ flexWrap: "wrap", gap: 10 }}><div><div style={{ fontSize: 14, color: T.muted }}>Hola,</div><H1>{cliente.nombre}</H1></div><Row style={{ gap: 8, flexWrap: "wrap" }}><button onClick={() => setSolicitar(true)} style={btnGhost} disabled={sus.length === 0}>📅 Solicitar cita</button><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Ver factura del mes</button></Row></Row>
         <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Información de tus mascotas y servicios prestados. Solo consulta.</p>
@@ -839,6 +945,7 @@ function VistaCliente({ duenoId }) {
       {factura && <Factura cliente={cliente} grupos={grupos} mes={mes} onClose={() => setFactura(false)} />}
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
       {solicitar && <FormSolicitudCita mascotas={sus} citas={citas} onClose={() => setSolicitar(false)} />}
+      {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} />}
     </div>
   );
 }
