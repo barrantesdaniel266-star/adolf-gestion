@@ -135,7 +135,7 @@ function useNotis(storageKey) {
   return { notis, push, marcarLeidas, noLeidas, toast, cerrarToast: () => setToast(null) };
 }
 
-function Campana({ notis, noLeidas, marcarLeidas }) {
+function Campana({ notis, noLeidas, marcarLeidas, onIr }) {
   const [open, setOpen] = useState(false);
   const toggle = () => { const n = !open; setOpen(n); if (n) setTimeout(marcarLeidas, 800); };
   return (
@@ -148,26 +148,31 @@ function Campana({ notis, noLeidas, marcarLeidas }) {
         <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", width: 300, maxHeight: 400, overflowY: "auto", background: T.surface, border: `1px solid ${T.line2}`, borderRadius: 14, boxShadow: "0 16px 50px rgba(0,0,0,.5)", zIndex: 61, padding: 8, animation: "pop .2s ease" }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, color: T.muted, padding: "6px 8px", textTransform: "uppercase", letterSpacing: .5 }}>Notificaciones</div>
           {notis.length === 0 ? <div style={{ padding: "22px 8px", textAlign: "center", color: T.dim, fontSize: 13 }}>Sin notificaciones todavía</div>
-            : notis.map((n) => (
-              <div key={n.id} style={{ padding: "9px 8px", borderTop: `1px solid ${T.line}`, background: n.leida ? "transparent" : "rgba(210,119,47,.07)", borderRadius: 8 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{n.titulo}</div>
-                <div style={{ fontSize: 12, color: T.muted }}>{n.detalle}</div>
-                <div style={{ fontSize: 10.5, color: T.dim, marginTop: 2 }}>{tiempoRelativo(n.ts)}</div>
-              </div>
-            ))}
+            : notis.map((n) => {
+              const accionable = onIr && n.accion;
+              return (
+                <div key={n.id} onClick={() => { if (accionable) { onIr(n); setOpen(false); } }} style={{ padding: "9px 8px", borderTop: `1px solid ${T.line}`, background: n.leida ? "transparent" : "rgba(210,119,47,.07)", borderRadius: 8, cursor: accionable ? "pointer" : "default" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{n.titulo}</div>
+                  <div style={{ fontSize: 12, color: T.muted }}>{n.detalle}</div>
+                  <div style={{ fontSize: 10.5, color: T.dim, marginTop: 2 }}>{tiempoRelativo(n.ts)}{accionable ? " · toca para ver" : ""}</div>
+                </div>
+              );
+            })}
         </div>
       </>}
     </div>
   );
 }
 
-function Toast({ noti, onClose }) {
+function Toast({ noti, onClose, onIr }) {
   useEffect(() => { const t = setTimeout(onClose, 5500); return () => clearTimeout(t); }, [noti.id]);
+  const accionable = onIr && noti.accion;
   return (
     <div style={{ position: "fixed", top: 14, right: 14, zIndex: 95, maxWidth: 330, animation: "slideIn .3s ease" }}>
-      <div onClick={onClose} style={{ background: T.surface, border: `1px solid ${T.rust}`, borderLeft: `4px solid ${T.rust}`, borderRadius: 12, padding: "12px 16px", boxShadow: "0 14px 40px rgba(0,0,0,.5)", cursor: "pointer" }}>
+      <div onClick={() => { if (accionable) onIr(noti); onClose(); }} style={{ background: T.surface, border: `1px solid ${T.rust}`, borderLeft: `4px solid ${T.rust}`, borderRadius: 12, padding: "12px 16px", boxShadow: "0 14px 40px rgba(0,0,0,.5)", cursor: "pointer" }}>
         <div style={{ fontSize: 13.5, fontWeight: 700, color: T.cream }}>{noti.titulo}</div>
         <div style={{ fontSize: 12.5, color: T.muted, marginTop: 2 }}>{noti.detalle}</div>
+        {accionable && <div style={{ fontSize: 11, color: T.rustSoft, marginTop: 4, fontWeight: 600 }}>Toca para ver la solicitud →</div>}
       </div>
     </div>
   );
@@ -240,7 +245,7 @@ function Panel({ onLogout }) {
     if (prevSolic.current === null) { prevSolic.current = ids; return; }
     solic.filter((c) => !prevSolic.current.has(c.id)).forEach((c) => {
       const m = mascotas.find((x) => x.id === c.mascotaId);
-      noti.push({ titulo: "Nueva solicitud de reserva 🔔", detalle: `${m ? m.nombre : "Mascota"} · ${servInfo(c.tipoServicio).nombre} · ${c.fecha} ${c.hora}` });
+      noti.push({ titulo: "Nueva solicitud de reserva 🔔", detalle: `${m ? m.nombre : "Mascota"} · ${servInfo(c.tipoServicio).nombre} · ${c.fecha} ${c.hora}`, accion: "agenda" });
     });
     prevSolic.current = ids;
   }, [citas]);
@@ -248,6 +253,7 @@ function Panel({ onLogout }) {
   const cliente = duenos.find((d) => d.id === clienteSel);
   const mascota = mascotas.find((m) => m.id === mascotaSel);
   const reset = (v) => { setVista(v); setClienteSel(null); setMascotaSel(null); };
+  const irANoti = (n) => { if (n && n.accion === "agenda") reset("agenda"); };
   const citasHoy = citas.filter((c) => c.fecha === hoy() && c.estado !== "completado").length;
 
   return (
@@ -261,7 +267,7 @@ function Panel({ onLogout }) {
               <button key={k} onClick={() => reset(k)} style={tab(vista === k && !clienteSel && !mascotaSel)}>{l}</button>
             ))}
           </nav>
-          <Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} />
+          <Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} onIr={irANoti} />
           <button onClick={() => setAdmin(true)} title="Administración" style={{ ...btnGhost, padding: "8px 11px", fontSize: 16 }}>⚙️</button>
           <button onClick={onLogout} style={{ ...btnGhost, padding: "8px 12px" }}>Salir</button>
         </div>
@@ -274,7 +280,7 @@ function Panel({ onLogout }) {
           : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} />
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
       </main>
-      {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} />}
+      {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} onIr={irANoti} />}
       {admin && <AdminPanel datos={datos} onClose={() => setAdmin(false)} />}
     </div>
   );
@@ -660,13 +666,14 @@ function CompartirCliente({ cliente, onClose }) {
   const link = `${window.location.origin}${window.location.pathname}?cliente=${cliente.id}`;
   const [copiado, setCopiado] = useState(false);
   const tel = (cliente.telefono || "").replace(/\D/g, "");
+  const msgWA = `Hola ${cliente.nombre} 🐾 Este es tu acceso personal a ADOLF.\n\nDesde este enlace puedes:\n• Agendar paseos, baños y hotel\n• Ver la información de tus mascotas\n• Consultar tus servicios, facturas y saldos\n• Recibir avisos cuando confirmemos tus citas\n\nGuárdalo, es solo para ti:\n${link}`;
   return (
     <Modal title="Compartir con el cliente" onClose={onClose}>
-      <p style={{ fontSize: 13, color: T.muted, marginBottom: 14 }}>Enlace de solo lectura para <b style={{ color: T.text }}>{cliente.nombre}</b>.</p>
+      <p style={{ fontSize: 13, color: T.muted, marginBottom: 14 }}>Enlace personal para <b style={{ color: T.text }}>{cliente.nombre}</b>: puede agendar citas y consultar sus mascotas, servicios y cuenta.</p>
       <Label>Enlace</Label><input className="seleccionable" readOnly value={link} onFocus={(e) => e.target.select()} style={{ ...inp, fontSize: 12.5 }} />
       <Row style={{ gap: 10, marginTop: 16, flexWrap: "wrap" }}>
         <button onClick={async () => { try { await navigator.clipboard.writeText(link); setCopiado(true); setTimeout(() => setCopiado(false), 2000); } catch { prompt("Copia:", link); } }} style={{ ...btnGhost, flex: 1, minWidth: 130 }}>{copiado ? "✓ Copiado" : "📋 Copiar enlace"}</button>
-        <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(`Hola ${cliente.nombre} 🐾 Mira la info de tus mascotas en ADOLF:\n${link}`)}`, "_blank")} disabled={!tel} style={{ ...btnPrim, flex: 1, minWidth: 130, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 WhatsApp</button>
+        <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msgWA)}`, "_blank")} disabled={!tel} style={{ ...btnPrim, flex: 1, minWidth: 130, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 WhatsApp</button>
       </Row>
     </Modal>
   );
