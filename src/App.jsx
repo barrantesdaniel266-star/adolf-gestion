@@ -229,6 +229,7 @@ function Panel({ onLogout }) {
   const [vista, setVista] = useState("resumen");
   const [clienteSel, setClienteSel] = useState(null);
   const [mascotaSel, setMascotaSel] = useState(null);
+  const [admin, setAdmin] = useState(false);
 
   // Notificaciones: avisar cuando entra una nueva solicitud de reserva
   const noti = useNotis("adolf_notis");
@@ -261,6 +262,7 @@ function Panel({ onLogout }) {
             ))}
           </nav>
           <Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} />
+          <button onClick={() => setAdmin(true)} title="Administración" style={{ ...btnGhost, padding: "8px 11px", fontSize: 16 }}>⚙️</button>
           <button onClick={onLogout} style={{ ...btnGhost, padding: "8px 12px" }}>Salir</button>
         </div>
       </header>
@@ -273,6 +275,7 @@ function Panel({ onLogout }) {
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
       </main>
       {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} />}
+      {admin && <AdminPanel datos={datos} onClose={() => setAdmin(false)} />}
     </div>
   );
 }
@@ -281,7 +284,6 @@ function Panel({ onLogout }) {
 function Resumen({ datos, irMascota }) {
   const { duenos, mascotas, servicios, movs, citas, salud } = datos;
   const [mes, setMes] = useState(mesActual());
-  const [recordatorios, setRecordatorios] = useState(false);
   const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
   const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
 
@@ -300,50 +302,11 @@ function Resumen({ datos, irMascota }) {
   // alertas de vacunas
   const alertasVac = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30).map((s) => { const m = mascotas.find((x) => x.id === s.mascotaId); return { ...s, mascota: m, dias: diasEntre(s.proxima) }; }).filter((x) => x.mascota).sort((a, b) => a.dias - b.dias);
 
-  // aviso de respaldo
-  const ultBackup = Number(localStorage.getItem("adolf_backup_last") || 0);
-  const backupViejo = !ultBackup || Date.now() - ultBackup > 30 * 86400000;
-
-  const exportarCSV = () => {
-    const filas = [["Fecha", "Cliente", "Mascota", "Tipo", "Concepto", "Cantidad", "Monto", "Pago"]];
-    movs.filter((m) => mesDe(m.fecha) === mes).sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")).forEach((m) => {
-      const masc = mascotas.find((x) => x.id === m.mascotaId) || {};
-      const cli = clienteDe(masc, duenos);
-      const concepto = esAbono(m) ? "Abono" : servInfo(m.tipoServicio).nombre + (m.modalidad === "mensual" ? " (mensualidad)" : "");
-      filas.push([m.fecha, cli.nombre, masc.nombre || "—", esAbono(m) ? "Abono" : "Servicio", concepto, m.cantidad || 1, Number(m.monto || 0), esAbono(m) ? "abono" : (pagado(m) ? "pagado" : "pendiente")]);
-    });
-    filas.push([], ["Facturado", "", "", "", "", "", t.facturado], ["Cobrado", "", "", "", "", "", t.cobrado], ["Saldo", "", "", "", "", "", t.saldo]);
-    descargar(`ADOLF_${mes}.csv`, "\uFEFF" + filas.map((f) => f.map(csvCelda).join(",")).join("\n"), "text/csv;charset=utf-8;");
-  };
-
-  const reportePDF = () => {
-    const fTipo = porTipo.map((x) => `<tr><td>${x.nombre}</td><td class="r">${x.n}</td><td class="r">${money(x.total)}</td></tr>`).join("") || '<tr><td colspan="3" style="color:#999">Sin datos</td></tr>';
-    const fCli = porCliente.map((c) => `<tr><td>${c.nombre}</td><td class="r">${money(c.facturado)}</td><td class="r">${money(c.cobrado)}</td><td class="r">${money(c.saldo)}</td></tr>`).join("") || '<tr><td colspan="4" style="color:#999">Sin datos</td></tr>';
-    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte ADOLF ${nombreMes(mes)}</title>
-      <style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:680px;margin:0 auto}
-      .head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:12px}.brand{font-size:32px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}
-      h2{font-size:14px;text-transform:uppercase;color:#d2772f;margin:22px 0 6px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #eee}th{font-size:11px;color:#999;text-transform:uppercase}.r{text-align:right}
-      .tot{display:flex;gap:24px;margin-top:14px;font-size:14px}.tot b{display:block;font-size:20px}.foot{margin-top:26px;text-align:center;font-family:sans-serif;font-weight:800;letter-spacing:3px;font-size:18px}</style></head>
-      <body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div style="text-align:right;font-size:12px;color:#555"><b>Reporte mensual</b><br>${nombreMes(mes)}<br>${hoy()}</div></div>
-      <div class="tot"><div>Facturado<b>${money(t.facturado)}</b></div><div>Cobrado<b style="color:#2f8f3a">${money(t.cobrado)}</b></div><div>Saldo<b style="color:#c47d10">${money(t.saldo)}</b></div></div>
-      <h2>Ingresos por servicio</h2><table><thead><tr><th>Servicio</th><th class="r">Cant.</th><th class="r">Total</th></tr></thead><tbody>${fTipo}</tbody></table>
-      <h2>Por cliente</h2><table><thead><tr><th>Cliente</th><th class="r">Facturado</th><th class="r">Cobrado</th><th class="r">Saldo</th></tr></thead><tbody>${fCli}</tbody></table>
-      <div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
-    const w = window.open("", "_blank"); if (!w) return alert("Permite las ventanas emergentes."); w.document.write(html); w.document.close();
-  };
-
-  const respaldo = () => {
-    descargar(`ADOLF_respaldo_${hoy()}.json`, JSON.stringify({ generado: new Date().toISOString(), duenos, mascotas, servicios, movimientos: movs, citas, salud }, null, 2), "application/json");
-    localStorage.setItem("adolf_backup_last", String(Date.now()));
-  };
-
   return (
     <div style={{ animation: "pop .35s ease" }}>
       <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Resumen del mes</H1>
         <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto", padding: "9px 12px" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
       </Row>
-
-      {backupViejo && <div style={{ background: T.infoBg, border: `1px solid ${T.info}`, borderRadius: 12, padding: "10px 14px", marginTop: 14, fontSize: 13, color: T.info, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}><span>💾 Hace tiempo no descargas un respaldo de tus datos.</span><button onClick={respaldo} style={{ ...btnSmall, background: T.info, color: "#0b1a20" }}>Descargar respaldo</button></div>}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginTop: 16 }}>
         <Stat label="Facturado" value={money(t.facturado)} accent={T.tan} sub={`${t.cargos.length} servicios`} />
@@ -351,17 +314,6 @@ function Resumen({ datos, irMascota }) {
         <Stat label={t.saldo >= 0 ? "Saldo pendiente" : "Saldo a favor"} value={money(Math.abs(t.saldo))} accent={t.saldo > 0 ? T.pend : T.ok} sub={`${pendientes.length} clientes deben`} />
         <Stat label="Clientes" value={duenos.length} accent={T.rust} sub={`${mascotas.length} mascotas`} />
       </div>
-
-      {/* Herramientas */}
-      <Card style={{ marginTop: 16 }}>
-        <H2>Reportes y herramientas</H2>
-        <Row style={{ gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-          <button onClick={() => setRecordatorios(true)} style={btnPrim} disabled={pendientes.length === 0} title={pendientes.length === 0 ? "Nadie tiene saldo pendiente" : ""}>📣 Recordatorios de pago{pendientes.length ? ` (${pendientes.length})` : ""}</button>
-          <button onClick={exportarCSV} style={btnGhost}>📊 Exportar Excel (CSV)</button>
-          <button onClick={reportePDF} style={btnGhost}>🧾 Reporte PDF</button>
-          <button onClick={respaldo} style={btnGhost}>💾 Descargar respaldo</button>
-        </Row>
-      </Card>
 
       {alertasVac.length > 0 && (
         <Card style={{ marginTop: 16, borderColor: T.pend }}>
@@ -388,8 +340,6 @@ function Resumen({ datos, irMascota }) {
               <b style={{ fontVariantNumeric: "tabular-nums", color: T.tan }}>{money(m.total)}</b></Row>))}
         </Card>
       </div>
-
-      {recordatorios && <RecordatoriosPago pendientes={pendientes} duenos={duenos} mes={mes} onClose={() => setRecordatorios(false)} />}
     </div>
   );
 }
@@ -412,6 +362,98 @@ function RecordatoriosPago({ pendientes, duenos, mes, onClose }) {
           </Row>
         );
       })}
+    </Modal>
+  );
+}
+
+/* ====================== RECORDATORIOS DE VACUNAS ====================== */
+function RecordatoriosVacunas({ alertas, onClose }) {
+  const estadoTxt = (d) => d < 0 ? `venció hace ${Math.abs(d)} día${Math.abs(d) !== 1 ? "s" : ""}` : d === 0 ? "vence hoy" : `vence en ${d} día${d !== 1 ? "s" : ""}`;
+  const msg = (a) => `Hola ${a.cliente.nombre} 🐾 Recordatorio de ADOLF: la vacuna "${a.titulo}" de ${a.mascota.nombre} ${estadoTxt(a.dias)} (fecha prevista: ${a.proxima}). Escríbenos para agendar y mantenerla al día. ¡Gracias!`;
+  return (
+    <Modal title="Recordatorios de vacunas" onClose={onClose}>
+      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Mascotas con vacuna próxima o vencida. Envía el aviso al dueño con un toque.</p>
+      {alertas.length === 0 ? <Empty texto="Ninguna vacuna próxima o vencida. 🎉" /> : alertas.map((a) => {
+        const tel = (a.cliente.telefono || "").replace(/\D/g, "");
+        return (
+          <Row key={a.id} between style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
+            <div><b style={{ fontSize: 14 }}>{a.mascota.nombre} · {a.titulo}</b><div style={{ fontSize: 12, color: a.dias < 0 ? T.danger : T.pend }}>{estadoTxt(a.dias)} · {a.cliente.nombre}</div></div>
+            <Row style={{ gap: 6 }}>
+              <button onClick={() => { navigator.clipboard?.writeText(msg(a)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
+              <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msg(a))}`, "_blank")} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Avisar</button>
+            </Row>
+          </Row>
+        );
+      })}
+    </Modal>
+  );
+}
+
+/* ====================== PANEL DE ADMINISTRACIÓN ====================== */
+function AdminPanel({ datos, onClose }) {
+  const { duenos, mascotas, servicios, movs, citas, salud } = datos;
+  const [mes, setMes] = useState(mesActual());
+  const [recordatorios, setRecordatorios] = useState(false);
+  const [vacunas, setVacunas] = useState(false);
+  const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
+  const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
+  const porTipo = SERVICIOS.map((s) => { const it = t.cargos.filter((m) => m.tipoServicio === s.id); return { ...s, total: it.reduce((a, m) => a + Number(m.monto || 0), 0), n: it.length }; }).filter((x) => x.n > 0).sort((a, b) => b.total - a.total);
+  const porCliente = duenos.map((d) => { const ids = mascotas.filter((m) => m.duenoId === d.id).map((m) => m.id); return { ...d, ...totales(movs.filter((m) => ids.includes(m.mascotaId) && mesDe(m.fecha) === mes)) }; }).filter((x) => x.facturado > 0 || x.saldo !== 0).sort((a, b) => b.facturado - a.facturado);
+  const pendientes = porCliente.filter((c) => c.saldo > 0);
+  const ultBackup = Number(localStorage.getItem("adolf_backup_last") || 0);
+  const alertasVac = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30).map((s) => { const m = mascotas.find((x) => x.id === s.mascotaId); return m ? { ...s, mascota: m, cliente: clienteDe(m, duenos), dias: diasEntre(s.proxima) } : null; }).filter(Boolean).sort((a, b) => a.dias - b.dias);
+
+  const exportarCSV = () => {
+    const filas = [["Fecha", "Cliente", "Mascota", "Tipo", "Concepto", "Cantidad", "Monto", "Pago"]];
+    movs.filter((m) => mesDe(m.fecha) === mes).sort((a, b) => (a.fecha || "").localeCompare(b.fecha || "")).forEach((m) => {
+      const masc = mascotas.find((x) => x.id === m.mascotaId) || {}; const cli = clienteDe(masc, duenos);
+      const concepto = esAbono(m) ? "Abono" : servInfo(m.tipoServicio).nombre + (m.modalidad === "mensual" ? " (mensualidad)" : "");
+      filas.push([m.fecha, cli.nombre, masc.nombre || "—", esAbono(m) ? "Abono" : "Servicio", concepto, m.cantidad || 1, Number(m.monto || 0), esAbono(m) ? "abono" : (pagado(m) ? "pagado" : "pendiente")]);
+    });
+    filas.push([], ["Facturado", "", "", "", "", "", t.facturado], ["Cobrado", "", "", "", "", "", t.cobrado], ["Saldo", "", "", "", "", "", t.saldo]);
+    descargar(`ADOLF_${mes}.csv`, "\uFEFF" + filas.map((f) => f.map(csvCelda).join(",")).join("\n"), "text/csv;charset=utf-8;");
+  };
+  const reportePDF = () => {
+    const fTipo = porTipo.map((x) => `<tr><td>${x.nombre}</td><td class="r">${x.n}</td><td class="r">${money(x.total)}</td></tr>`).join("") || '<tr><td colspan="3" style="color:#999">Sin datos</td></tr>';
+    const fCli = porCliente.map((c) => `<tr><td>${c.nombre}</td><td class="r">${money(c.facturado)}</td><td class="r">${money(c.cobrado)}</td><td class="r">${money(c.saldo)}</td></tr>`).join("") || '<tr><td colspan="4" style="color:#999">Sin datos</td></tr>';
+    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte ADOLF ${nombreMes(mes)}</title>
+      <style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:680px;margin:0 auto}
+      .head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:12px}.brand{font-size:32px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}
+      h2{font-size:14px;text-transform:uppercase;color:#d2772f;margin:22px 0 6px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #eee}th{font-size:11px;color:#999;text-transform:uppercase}.r{text-align:right}
+      .tot{display:flex;gap:24px;margin-top:14px;font-size:14px}.tot b{display:block;font-size:20px}.foot{margin-top:26px;text-align:center;font-family:sans-serif;font-weight:800;letter-spacing:3px;font-size:18px}</style></head>
+      <body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div style="text-align:right;font-size:12px;color:#555"><b>Reporte mensual</b><br>${nombreMes(mes)}<br>${hoy()}</div></div>
+      <div class="tot"><div>Facturado<b>${money(t.facturado)}</b></div><div>Cobrado<b style="color:#2f8f3a">${money(t.cobrado)}</b></div><div>Saldo<b style="color:#c47d10">${money(t.saldo)}</b></div></div>
+      <h2>Ingresos por servicio</h2><table><thead><tr><th>Servicio</th><th class="r">Cant.</th><th class="r">Total</th></tr></thead><tbody>${fTipo}</tbody></table>
+      <h2>Por cliente</h2><table><thead><tr><th>Cliente</th><th class="r">Facturado</th><th class="r">Cobrado</th><th class="r">Saldo</th></tr></thead><tbody>${fCli}</tbody></table>
+      <div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
+    const w = window.open("", "_blank"); if (!w) return alert("Permite las ventanas emergentes."); w.document.write(html); w.document.close();
+  };
+  const respaldo = () => {
+    descargar(`ADOLF_respaldo_${hoy()}.json`, JSON.stringify({ generado: new Date().toISOString(), duenos, mascotas, servicios, movimientos: movs, citas, salud }, null, 2), "application/json");
+    localStorage.setItem("adolf_backup_last", String(Date.now())); alert("Respaldo descargado. Guárdalo en un lugar seguro.");
+  };
+
+  const opcion = (icon, titulo, desc, onClick, extra) => (
+    <button onClick={onClick} style={{ ...btnGhost, width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", marginBottom: 8 }} {...extra}>
+      <span style={{ fontSize: 22, width: 26, textAlign: "center" }}>{icon}</span>
+      <span><span style={{ display: "block", fontWeight: 700, color: T.cream, fontSize: 14 }}>{titulo}</span><span style={{ fontSize: 11.5, color: T.muted }}>{desc}</span></span>
+    </button>
+  );
+
+  return (
+    <Modal title="⚙️ Administración" onClose={onClose}>
+      <Label>Mes para reportes y exportación</Label>
+      <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, marginBottom: 16 }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
+
+      {opcion("📣", `Recordatorios de pago${pendientes.length ? ` (${pendientes.length})` : ""}`, pendientes.length ? "Avisar por WhatsApp a quienes deben" : "Nadie tiene saldo pendiente este mes", () => pendientes.length && setRecordatorios(true), { disabled: pendientes.length === 0 })}
+      {opcion("💉", `Recordatorios de vacunas${alertasVac.length ? ` (${alertasVac.length})` : ""}`, alertasVac.length ? "Avisar a clientes por WhatsApp" : "Ninguna vacuna próxima o vencida", () => alertasVac.length && setVacunas(true), { disabled: alertasVac.length === 0 })}
+      {opcion("📊", "Exportar a Excel (CSV)", `Detalle de movimientos de ${nombreMes(mes)}`, exportarCSV)}
+      {opcion("🧾", "Reporte PDF del mes", "Totales, por servicio y por cliente", reportePDF)}
+      {opcion("💾", "Descargar respaldo", ultBackup ? `Última copia: ${new Date(ultBackup).toLocaleDateString("es-CO")}` : "Aún no has descargado un respaldo", respaldo)}
+
+      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 8, lineHeight: 1.6 }}>El respaldo descarga todos tus datos en un archivo. Guárdalo en un lugar seguro (correo, nube o computador) cada cierto tiempo.</p>
+      {recordatorios && <RecordatoriosPago pendientes={pendientes} duenos={duenos} mes={mes} onClose={() => setRecordatorios(false)} />}
+      {vacunas && <RecordatoriosVacunas alertas={alertasVac} onClose={() => setVacunas(false)} />}
     </Modal>
   );
 }
@@ -895,6 +937,21 @@ function VistaCliente({ duenoId }) {
     });
     prevEst.current = map;
   }, [citas, mascotas]);
+
+  // Aviso de vacunas próximas o vencidas (una sola vez por alerta)
+  useEffect(() => {
+    const susM = mascotas.filter((m) => m.duenoId === duenoId);
+    const alertas = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30 && susM.find((m) => m.id === s.mascotaId));
+    if (!alertas.length) return;
+    let avisadas; try { avisadas = new Set(JSON.parse(localStorage.getItem("adolf_vac_avis_" + duenoId) || "[]")); } catch { avisadas = new Set(); }
+    const nuevas = alertas.filter((a) => !avisadas.has(a.id + "|" + a.proxima));
+    if (!nuevas.length) return;
+    const a0 = nuevas[0]; const m = mascotas.find((x) => x.id === a0.mascotaId); const d = diasEntre(a0.proxima);
+    const det = nuevas.length > 1 ? `${nuevas.length} vacunas de tus mascotas requieren atención` : `${m ? m.nombre : ""}: ${a0.titulo} ${d < 0 ? "vencida" : d === 0 ? "vence hoy" : `vence en ${d} días`}`;
+    noti.push({ titulo: "Recordatorio de vacunas 💉", detalle: det });
+    nuevas.forEach((a) => avisadas.add(a.id + "|" + a.proxima));
+    try { localStorage.setItem("adolf_vac_avis_" + duenoId, JSON.stringify([...avisadas])); } catch {}
+  }, [salud, mascotas]);
   const cliente = duenos.find((d) => d.id === duenoId);
   const sus = mascotas.filter((m) => m.duenoId === duenoId);
   if (!cliente && cargando) return <Centro><div style={{ color: T.muted }}>Cargando…</div></Centro>;
@@ -926,6 +983,22 @@ function VistaCliente({ duenoId }) {
                   </Row>
                 </Row>
               ); })}
+            </Card>
+          );
+        })()}
+
+        {(() => {
+          const av = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30 && sus.find((m) => m.id === s.mascotaId)).map((s) => ({ ...s, mascota: mascotas.find((m) => m.id === s.mascotaId), dias: diasEntre(s.proxima) })).sort((a, b) => a.dias - b.dias);
+          if (!av.length) return null;
+          return (
+            <Card style={{ marginTop: 16, borderColor: T.pend }}>
+              <H2>💉 Vacunas por revisar</H2>
+              {av.map((a, i) => (
+                <Row key={a.id} between style={{ padding: "8px 0", borderBottom: i < av.length - 1 ? `1px solid ${T.line}` : "none" }}>
+                  <span style={{ fontSize: 13.5 }}>{a.mascota ? a.mascota.nombre : ""} · {a.titulo}</span>
+                  <b style={{ color: a.dias < 0 ? T.danger : T.pend, fontSize: 12.5 }}>{a.dias < 0 ? `vencida hace ${Math.abs(a.dias)} d` : a.dias === 0 ? "es hoy" : `en ${a.dias} d`}</b>
+                </Row>
+              ))}
             </Card>
           );
         })()}
