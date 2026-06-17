@@ -233,7 +233,7 @@ function useDatos() {
 /* ====================== PANEL ====================== */
 function Panel({ onLogout }) {
   const datos = useDatos();
-  const { duenos, mascotas, servicios, movs, citas, salud } = datos;
+  const { duenos, mascotas, servicios, movs, citas, salud, bloqueos } = datos;
   const [vista, setVista] = useState("resumen");
   const [clienteSel, setClienteSel] = useState(null);
   const [mascotaSel, setMascotaSel] = useState(null);
