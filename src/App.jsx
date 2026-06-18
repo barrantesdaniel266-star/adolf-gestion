@@ -86,6 +86,11 @@ function GlobalCSS() {
     input, select, textarea { color-scheme: dark; transition: border-color .14s ease; }
     select option { background: ${T.surface}; color: ${T.text}; }
     html { scroll-behavior: smooth; }
+    html, body, #root { min-height: 100%; }
+    body { margin: 0; background: ${T.bg}; }
+    /* Respeta el notch / barra de estado del iPhone en modo app instalada */
+    .adolf-header { padding-top: max(11px, env(safe-area-inset-top)) !important; padding-left: max(18px, env(safe-area-inset-left)) !important; padding-right: max(18px, env(safe-area-inset-right)) !important; }
+    .adolf-main { padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); padding-bottom: max(80px, calc(env(safe-area-inset-bottom) + 60px)); }
     button { transition: filter .12s ease, transform .08s ease, opacity .12s ease; }
     button:hover:not(:disabled) { filter: brightness(1.09); }
     button:active:not(:disabled) { transform: translateY(1px); }
@@ -238,9 +243,16 @@ function BannerInstalar() {
 /* ====================== APP ====================== */
 export default function App() {
   const clienteId = new URLSearchParams(window.location.search).get("cliente");
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  const guardado = (() => { try { return localStorage.getItem("adolf_cliente"); } catch { return null; } })();
   const [logged, setLogged] = useState(() => localStorage.getItem("adolf_auth") === "1");
+  // Recordar el cliente para que su app instalada abra directo en su panel
+  useEffect(() => { if (clienteId) { try { localStorage.setItem("adolf_cliente", clienteId); } catch {} } }, [clienteId]);
+  // App instalada (cliente) abierta sin ?cliente → llevarla a su dashboard guardado
+  useEffect(() => { if (!clienteId && standalone && guardado && !logged) window.location.replace(`${window.location.pathname}?cliente=${guardado}`); }, []);
   const entrar = () => { localStorage.setItem("adolf_auth", "1"); setLogged(true); };
   const salir = () => { localStorage.removeItem("adolf_auth"); setLogged(false); };
+  if (!clienteId && standalone && guardado && !logged) return null; // evita el parpadeo del login mientras redirige
   if (clienteId) return <><GlobalCSS /><VistaCliente duenoId={clienteId} /></>;
   if (!logged) return <><GlobalCSS /><Login onOk={entrar} /></>;
   return <><GlobalCSS /><Panel onLogout={salir} /></>;
@@ -317,7 +329,7 @@ function Panel({ onLogout }) {
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
       <header style={{ position: "sticky", top: 0, zIndex: 20, background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", backdropFilter: "blur(8px)", borderBottom: `1px solid ${T.line}` }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "11px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div className="adolf-header" style={{ maxWidth: 1100, margin: "0 auto", padding: "11px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <img src={logo} alt="" style={{ height: 38, cursor: "pointer" }} onClick={() => reset("resumen")} />
           <div style={{ cursor: "pointer" }} onClick={() => reset("resumen")}><div style={{ fontFamily: display, fontSize: 27, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 9.5, color: T.rust, letterSpacing: 2.5, textTransform: "uppercase" }}>Gestión de servicios</div></div>
           <nav style={{ marginLeft: "auto", display: "flex", gap: 4, background: T.surface, borderRadius: 12, padding: 4, border: `1px solid ${T.line}`, flexWrap: "wrap" }}>
@@ -330,7 +342,7 @@ function Panel({ onLogout }) {
           <button onClick={onLogout} style={{ ...btnGhost, padding: "8px 12px" }}>Salir</button>
         </div>
       </header>
-      <main style={{ maxWidth: 1100, margin: "0 auto", padding: "22px 18px 80px" }}>
+      <main className="adolf-main" style={{ maxWidth: 1100, margin: "0 auto", padding: "22px 18px 80px" }}>
         <BannerInstalar />
         {mascota ? <MascotaDetalle mascota={mascota} duenos={duenos} servicios={servicios} movs={movs} salud={salud} onBack={() => setMascotaSel(null)} />
           : cliente ? <ClienteDetalle cliente={cliente} mascotas={mascotas} servicios={servicios} movs={movs} duenos={duenos} abrirMascota={(id) => setMascotaSel(id)} onBack={() => setClienteSel(null)} />
@@ -836,14 +848,15 @@ function FormMascota({ inicial, duenos, onClose }) {
   const editando = !!inicial.id;
   const [f, setF] = useState({ tipo: "perro", nombre: "", raza: "", color: "", edad: "", duenoId: "", foto: "", carnet: "", ...inicial });
   const [g, setG] = useState(false); const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  const subirFoto = (e) => { const file = e.target.files[0]; if (file) comprimirImagen(file, (d) => setF((p) => ({ ...p, foto: d })), 400, 0.8); };
-  const subirCarnet = (e) => { const file = e.target.files[0]; if (file) comprimirImagen(file, (d) => setF((p) => ({ ...p, carnet: d })), 1000, 0.72); };
+  const fotoRef = useRef(null), carnetRef = useRef(null);
+  const subirFoto = (e) => { const file = e.target.files[0]; if (file) comprimirImagen(file, (d) => setF((p) => ({ ...p, foto: d })), 400, 0.8); e.target.value = ""; };
+  const subirCarnet = (e) => { const file = e.target.files[0]; if (file) comprimirImagen(file, (d) => setF((p) => ({ ...p, carnet: d })), 1000, 0.72); e.target.value = ""; };
   const guardar = async () => { if (!f.nombre.trim()) return alert("El nombre es obligatorio."); if (!f.duenoId) return alert("Selecciona el cliente (dueño)."); setG(true); const data = { tipo: f.tipo, nombre: f.nombre.trim(), raza: f.raza.trim(), color: f.color.trim(), edad: f.edad.trim(), duenoId: f.duenoId, foto: f.foto || "", carnet: f.carnet || "" }; try { if (editando) await updateDoc(doc(db, "mascotas", f.id), data); else await addDoc(collection(db, "mascotas"), { ...data, createdAt: Date.now() }); onClose(); } catch (e) { alert("Error: " + e.message); setG(false); } };
   return (
     <Modal title={editando ? "Editar mascota" : "Nueva mascota"} onClose={onClose}>
       <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
-        <div style={{ textAlign: "center" }}><div style={{ width: 72, height: 72, borderRadius: 16, overflow: "hidden", background: T.surface2, border: `1px solid ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>{f.foto ? <img src={f.foto} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : emojiMascota(f.tipo)}</div><label style={{ ...btnGhost, display: "inline-block", cursor: "pointer", marginTop: 8, padding: "6px 10px", fontSize: 12 }}>{f.foto ? "Cambiar" : "Foto"}<input type="file" accept="image/*" onChange={subirFoto} style={{ display: "none" }} /></label></div>
-        <div style={{ textAlign: "center" }}><div style={{ width: 72, height: 72, borderRadius: 16, overflow: "hidden", background: T.surface2, border: `1px dashed ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>{f.carnet ? <img src={f.carnet} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "💉"}</div><label style={{ ...btnGhost, display: "inline-block", cursor: "pointer", marginTop: 8, padding: "6px 10px", fontSize: 12 }}>{f.carnet ? "Cambiar" : "Carnet"}<input type="file" accept="image/*" onChange={subirCarnet} style={{ display: "none" }} /></label></div>
+        <div style={{ textAlign: "center" }}><div style={{ width: 72, height: 72, borderRadius: 16, overflow: "hidden", background: T.surface2, border: `1px solid ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>{f.foto ? <img src={f.foto} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : emojiMascota(f.tipo)}</div><button type="button" onClick={() => fotoRef.current?.click()} style={{ ...btnGhost, marginTop: 8, padding: "6px 10px", fontSize: 12 }}>{f.foto ? "Cambiar" : "Foto"}</button><input ref={fotoRef} type="file" accept="image/*" onChange={subirFoto} style={{ display: "none" }} /></div>
+        <div style={{ textAlign: "center" }}><div style={{ width: 72, height: 72, borderRadius: 16, overflow: "hidden", background: T.surface2, border: `1px dashed ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>{f.carnet ? <img src={f.carnet} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "💉"}</div><button type="button" onClick={() => carnetRef.current?.click()} style={{ ...btnGhost, marginTop: 8, padding: "6px 10px", fontSize: 12 }}>{f.carnet ? "Cambiar" : "Carnet"}</button><input ref={carnetRef} type="file" accept="image/*" onChange={subirCarnet} style={{ display: "none" }} /></div>
         <div style={{ alignSelf: "center", fontSize: 11.5, color: T.dim, flex: 1, minWidth: 110 }}>Foto de la mascota y del carnet de vacunas (opcionales).</div>
       </div>
       <Label>Cliente (dueño) *</Label><select value={f.duenoId} onChange={set("duenoId")} style={{ ...inp, marginBottom: 12 }}><option value="">Selecciona…</option>{duenos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}</select>
@@ -1246,8 +1259,8 @@ function VistaCliente({ duenoId }) {
   const grupos = sus.map((m) => { const mm = movs.filter((x) => x.mascotaId === m.id && mesDe(x.fecha) === mes); return { mascota: m, cargos: mm.filter(esCargo), abonos: mm.filter(esAbono) }; }).filter((g) => g.cargos.length || g.abonos.length);
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
-      <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div><div style={{ marginLeft: "auto" }}><Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} /></div></div></header>
-      <main style={{ maxWidth: 760, margin: "0 auto", padding: "22px 18px 80px" }}>
+      <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div className="adolf-header" style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div><div style={{ marginLeft: "auto" }}><Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} /></div></div></header>
+      <main className="adolf-main" style={{ maxWidth: 760, margin: "0 auto", padding: "22px 18px 80px" }}>
         <BannerInstalar />
         <Row between style={{ flexWrap: "wrap", gap: 10 }}><div><div style={{ fontSize: 14, color: T.muted }}>Hola,</div><H1>{cliente.nombre}</H1></div><Row style={{ gap: 8, flexWrap: "wrap" }}><button onClick={() => setSolicitar(true)} style={btnGhost} disabled={sus.length === 0}>📅 Solicitar cita</button><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Ver factura del mes</button></Row></Row>
         <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Información de tus mascotas y servicios prestados. Solo consulta.</p>
