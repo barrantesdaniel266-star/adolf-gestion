@@ -241,18 +241,52 @@ function BannerInstalar() {
 }
 
 /* ====================== APP ====================== */
+/* Lee el id de cliente desde ?cliente= o desde el hash (#cliente=) para sobrevivir a iOS */
+function getClienteId() {
+  try {
+    const sp = new URLSearchParams(window.location.search);
+    let id = sp.get("cliente");
+    if (!id && window.location.hash) {
+      const h = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      id = h.get("cliente") || h.get("c");
+    }
+    return id || null;
+  } catch { return null; }
+}
+/* Genera un manifest propio del cliente para que la app instalada (iPhone) abra en SU dashboard */
+function inyectarManifestCliente(id) {
+  try {
+    const origin = window.location.origin;
+    const start = `${origin}/?cliente=${id}#cliente=${id}`;
+    const manifest = {
+      name: "ADOLF", short_name: "ADOLF", id: `/?cliente=${id}`,
+      start_url: start, scope: "/", display: "standalone",
+      background_color: "#241d16", theme_color: "#241d16",
+      icons: [
+        { src: `${origin}/icon-192.png`, sizes: "192x192", type: "image/png" },
+        { src: `${origin}/icon-512.png`, sizes: "512x512", type: "image/png" },
+        { src: `${origin}/icon-maskable-512.png`, sizes: "512x512", type: "image/png", purpose: "maskable" },
+      ],
+    };
+    const blobURL = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+    let link = document.querySelector('link[rel="manifest"]');
+    if (!link) { link = document.createElement("link"); link.rel = "manifest"; document.head.appendChild(link); }
+    link.setAttribute("href", blobURL);
+  } catch {}
+}
+
 export default function App() {
-  const clienteId = new URLSearchParams(window.location.search).get("cliente");
+  const clienteId = getClienteId();
   const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   const guardado = (() => { try { return localStorage.getItem("adolf_cliente"); } catch { return null; } })();
   const [logged, setLogged] = useState(() => localStorage.getItem("adolf_auth") === "1");
-  // Recordar el cliente para que su app instalada abra directo en su panel
-  useEffect(() => { if (clienteId) { try { localStorage.setItem("adolf_cliente", clienteId); } catch {} } }, [clienteId]);
-  // App instalada (cliente) abierta sin ?cliente → llevarla a su dashboard guardado
+  // Cliente: recordar + generar su manifest propio (para que su app instalada abra en su panel)
+  useEffect(() => { if (clienteId) { try { localStorage.setItem("adolf_cliente", clienteId); } catch {} inyectarManifestCliente(clienteId); } }, [clienteId]);
+  // Respaldo (Android/escritorio): app instalada abierta sin cliente → ir al panel guardado
   useEffect(() => { if (!clienteId && standalone && guardado && !logged) window.location.replace(`${window.location.pathname}?cliente=${guardado}`); }, []);
   const entrar = () => { localStorage.setItem("adolf_auth", "1"); setLogged(true); };
   const salir = () => { localStorage.removeItem("adolf_auth"); setLogged(false); };
-  if (!clienteId && standalone && guardado && !logged) return null; // evita el parpadeo del login mientras redirige
+  if (!clienteId && standalone && guardado && !logged) return null;
   if (clienteId) return <><GlobalCSS /><VistaCliente duenoId={clienteId} /></>;
   if (!logged) return <><GlobalCSS /><Login onOk={entrar} /></>;
   return <><GlobalCSS /><Panel onLogout={salir} /></>;
