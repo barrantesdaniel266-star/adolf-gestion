@@ -253,25 +253,35 @@ function getClienteId() {
     return id || null;
   } catch { return null; }
 }
-/* Genera un manifest propio del cliente para que la app instalada (iPhone) abra en SU dashboard */
-function inyectarManifestCliente(id) {
+/* Prepara la instalación del cliente según la plataforma para que la app abra en SU dashboard */
+function prepararInstalacionCliente(id) {
   try {
-    const origin = window.location.origin;
-    const start = `${origin}/?cliente=${id}#cliente=${id}`;
-    const manifest = {
-      name: "ADOLF", short_name: "ADOLF", id: `/?cliente=${id}`,
-      start_url: start, scope: "/", display: "standalone",
-      background_color: "#241d16", theme_color: "#241d16",
-      icons: [
-        { src: `${origin}/icon-192.png`, sizes: "192x192", type: "image/png" },
-        { src: `${origin}/icon-512.png`, sizes: "512x512", type: "image/png" },
-        { src: `${origin}/icon-maskable-512.png`, sizes: "512x512", type: "image/png", purpose: "maskable" },
-      ],
-    };
-    const blobURL = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
-    let link = document.querySelector('link[rel="manifest"]');
-    if (!link) { link = document.createElement("link"); link.rel = "manifest"; document.head.appendChild(link); }
-    link.setAttribute("href", blobURL);
+    const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    // Asegura el id en el hash (iOS conserva el hash al "Agregar a inicio", aunque borre el ?query)
+    if (!/cliente=/.test(window.location.hash)) {
+      window.history.replaceState(null, "", `${window.location.pathname}?cliente=${id}#cliente=${id}`);
+    }
+    const link = document.querySelector('link[rel="manifest"]');
+    if (esIOS) {
+      // iOS ignora manifests dinámicos y usaría start_url "/" del estático → lo quitamos para que capture la URL actual
+      if (link && link.parentNode) link.parentNode.removeChild(link);
+    } else {
+      // Android / escritorio: manifest propio con start_url hacia el dashboard del cliente
+      const origin = window.location.origin;
+      const manifest = {
+        name: "ADOLF", short_name: "ADOLF", id: `/?cliente=${id}`,
+        start_url: `${origin}/?cliente=${id}#cliente=${id}`, scope: "/", display: "standalone",
+        background_color: "#241d16", theme_color: "#241d16",
+        icons: [
+          { src: `${origin}/icon-192.png`, sizes: "192x192", type: "image/png" },
+          { src: `${origin}/icon-512.png`, sizes: "512x512", type: "image/png" },
+          { src: `${origin}/icon-maskable-512.png`, sizes: "512x512", type: "image/png", purpose: "maskable" },
+        ],
+      };
+      const blobURL = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/manifest+json" }));
+      let l = link; if (!l) { l = document.createElement("link"); l.rel = "manifest"; document.head.appendChild(l); }
+      l.setAttribute("href", blobURL);
+    }
   } catch {}
 }
 
@@ -281,7 +291,7 @@ export default function App() {
   const guardado = (() => { try { return localStorage.getItem("adolf_cliente"); } catch { return null; } })();
   const [logged, setLogged] = useState(() => localStorage.getItem("adolf_auth") === "1");
   // Cliente: recordar + generar su manifest propio (para que su app instalada abra en su panel)
-  useEffect(() => { if (clienteId) { try { localStorage.setItem("adolf_cliente", clienteId); } catch {} inyectarManifestCliente(clienteId); } }, [clienteId]);
+  useEffect(() => { if (clienteId) { try { localStorage.setItem("adolf_cliente", clienteId); } catch {} prepararInstalacionCliente(clienteId); } }, [clienteId]);
   // Respaldo (Android/escritorio): app instalada abierta sin cliente → ir al panel guardado
   useEffect(() => { if (!clienteId && standalone && guardado && !logged) window.location.replace(`${window.location.pathname}?cliente=${guardado}`); }, []);
   const entrar = () => { localStorage.setItem("adolf_auth", "1"); setLogged(true); };
