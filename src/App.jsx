@@ -241,9 +241,11 @@ function BannerInstalar() {
 }
 
 /* ====================== APP ====================== */
-/* Lee el id de cliente desde ?cliente= o desde el hash (#cliente=) para sobrevivir a iOS */
+/* Lee el id de cliente desde la ruta /c/ID, o ?cliente=, o el hash (compatibilidad) */
 function getClienteId() {
   try {
+    const m = window.location.pathname.match(/\/c\/([^/?#]+)/);
+    if (m) return decodeURIComponent(m[1]);
     const sp = new URLSearchParams(window.location.search);
     let id = sp.get("cliente");
     if (!id && window.location.hash) {
@@ -253,24 +255,23 @@ function getClienteId() {
     return id || null;
   } catch { return null; }
 }
-/* Prepara la instalación del cliente según la plataforma para que la app abra en SU dashboard */
+/* Prepara la instalación del cliente: usa la RUTA /c/ID (iOS siempre conserva la ruta) */
 function prepararInstalacionCliente(id) {
   try {
     const esIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    // Asegura el id en el hash (iOS conserva el hash al "Agregar a inicio", aunque borre el ?query)
-    if (!/cliente=/.test(window.location.hash)) {
-      window.history.replaceState(null, "", `${window.location.pathname}?cliente=${id}#cliente=${id}`);
-    }
+    const ruta = `/c/${id}`;
+    // Normaliza la barra de direcciones a /c/ID para que iOS capture esa ruta al "Agregar a inicio"
+    if (window.location.pathname !== ruta) window.history.replaceState(null, "", ruta);
     const link = document.querySelector('link[rel="manifest"]');
     if (esIOS) {
-      // iOS ignora manifests dinámicos y usaría start_url "/" del estático → lo quitamos para que capture la URL actual
+      // iOS usaría el start_url "/" del manifest estático → lo quitamos para que use la ruta actual
       if (link && link.parentNode) link.parentNode.removeChild(link);
     } else {
-      // Android / escritorio: manifest propio con start_url hacia el dashboard del cliente
+      // Android / escritorio: manifest propio con start_url a la ruta del cliente
       const origin = window.location.origin;
       const manifest = {
-        name: "ADOLF", short_name: "ADOLF", id: `/?cliente=${id}`,
-        start_url: `${origin}/?cliente=${id}#cliente=${id}`, scope: "/", display: "standalone",
+        name: "ADOLF", short_name: "ADOLF", id: ruta,
+        start_url: `${origin}${ruta}`, scope: "/", display: "standalone",
         background_color: "#241d16", theme_color: "#241d16",
         icons: [
           { src: `${origin}/icon-192.png`, sizes: "192x192", type: "image/png" },
@@ -293,7 +294,7 @@ export default function App() {
   // Cliente: recordar + generar su manifest propio (para que su app instalada abra en su panel)
   useEffect(() => { if (clienteId) { try { localStorage.setItem("adolf_cliente", clienteId); } catch {} prepararInstalacionCliente(clienteId); } }, [clienteId]);
   // Respaldo (Android/escritorio): app instalada abierta sin cliente → ir al panel guardado
-  useEffect(() => { if (!clienteId && standalone && guardado && !logged) window.location.replace(`${window.location.pathname}?cliente=${guardado}`); }, []);
+  useEffect(() => { if (!clienteId && standalone && guardado && !logged) window.location.replace(`/c/${guardado}`); }, []);
   const entrar = () => { localStorage.setItem("adolf_auth", "1"); setLogged(true); };
   const salir = () => { localStorage.removeItem("adolf_auth"); setLogged(false); };
   if (!clienteId && standalone && guardado && !logged) return null;
@@ -871,7 +872,7 @@ function ClienteDetalle({ cliente, mascotas, servicios, movs, duenos, abrirMasco
 }
 
 function CompartirCliente({ cliente, onClose }) {
-  const link = `${window.location.origin}${window.location.pathname}?cliente=${cliente.id}`;
+  const link = `${window.location.origin}/c/${cliente.id}`;
   const [copiado, setCopiado] = useState(false);
   const tel = waTel(cliente.telefono);
   const msgWA = `Hola ${cliente.nombre} 🐾 Este es tu acceso personal a ADOLF.\n\nDesde este enlace puedes:\n• Agendar paseos, baños y hotel\n• Ver la información de tus mascotas\n• Consultar tus servicios, facturas y saldos\n• Recibir avisos cuando confirmemos tus citas\n\nGuárdalo, es solo para ti:\n${link}`;
