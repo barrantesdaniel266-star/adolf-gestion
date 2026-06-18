@@ -180,6 +180,61 @@ function Toast({ noti, onClose, onIr }) {
   );
 }
 
+/* ====================== INSTALAR APP (PWA) ====================== */
+let _bip = null;
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); _bip = e; window.dispatchEvent(new Event("adolf-bip")); });
+}
+function useInstalar() {
+  const [visible, setVisible] = useState(false);
+  const [esIOS, setEsIOS] = useState(false);
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    if (standalone || localStorage.getItem("adolf_install_off") === "1") return;
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone;
+    if (ios) { setEsIOS(true); setVisible(true); return; }
+    if (_bip) setVisible(true);
+    const onBip = () => setVisible(true);
+    const onInst = () => setVisible(false);
+    window.addEventListener("adolf-bip", onBip);
+    window.addEventListener("appinstalled", onInst);
+    return () => { window.removeEventListener("adolf-bip", onBip); window.removeEventListener("appinstalled", onInst); };
+  }, []);
+  const instalar = async () => { if (!_bip) return; _bip.prompt(); try { await _bip.userChoice; } catch {} _bip = null; setVisible(false); };
+  const cerrar = () => { setVisible(false); try { localStorage.setItem("adolf_install_off", "1"); } catch {} };
+  return { visible, esIOS, instalar, cerrar };
+}
+function BannerInstalar() {
+  const { visible, esIOS, instalar, cerrar } = useInstalar();
+  const [pasos, setPasos] = useState(false);
+  if (!visible) return null;
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(180deg,#33271a,#2b2218)", border: `1px solid ${T.rust}`, borderRadius: 14, padding: "11px 14px", marginBottom: 16, boxShadow: T.shadow, animation: "pop .3s ease" }}>
+        <img src={logo} alt="" style={{ height: 34, width: "auto", flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: T.cream }}>Instala ADOLF en tu celular</div>
+          <div style={{ fontSize: 11.5, color: T.muted }}>Acceso rápido, como una app, desde tu pantalla de inicio.</div>
+        </div>
+        <button onClick={esIOS ? () => setPasos(true) : instalar} style={{ ...btnPrim, padding: "8px 14px", fontSize: 13, flexShrink: 0 }}>📲 Instalar</button>
+        <button onClick={cerrar} title="Ahora no" style={{ ...xBtn, fontSize: 16, flexShrink: 0 }}>✕</button>
+      </div>
+      {pasos && (
+        <Modal title="Instalar en iPhone" onClose={() => setPasos(false)}>
+          <p style={{ fontSize: 13, color: T.muted, marginBottom: 14 }}>En 3 pasos (usando <b style={{ color: T.text }}>Safari</b>):</p>
+          {[["1", "Toca el botón Compartir", "El cuadrito con la flecha hacia arriba ⬆️, en la barra de Safari."], ["2", "Elige “Agregar a inicio”", "Desliza las opciones hasta encontrarla (Add to Home Screen)."], ["3", "Toca “Agregar”", "Aparecerá el ícono del dóberman en tu pantalla de inicio."]].map(([n, t, d]) => (
+            <Row key={n} style={{ gap: 12, padding: "9px 0", borderBottom: `1px solid ${T.line}`, alignItems: "flex-start" }}>
+              <div style={{ width: 26, height: 26, borderRadius: 999, background: T.rust, color: "#241405", fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 13 }}>{n}</div>
+              <div><div style={{ fontSize: 14, fontWeight: 700, color: T.cream }}>{t}</div><div style={{ fontSize: 12, color: T.muted }}>{d}</div></div>
+            </Row>
+          ))}
+          <button onClick={() => setPasos(false)} style={{ ...btnPrim, width: "100%", marginTop: 16 }}>Entendido</button>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 /* ====================== APP ====================== */
 export default function App() {
   const clienteId = new URLSearchParams(window.location.search).get("cliente");
@@ -276,6 +331,7 @@ function Panel({ onLogout }) {
         </div>
       </header>
       <main style={{ maxWidth: 1100, margin: "0 auto", padding: "22px 18px 80px" }}>
+        <BannerInstalar />
         {mascota ? <MascotaDetalle mascota={mascota} duenos={duenos} servicios={servicios} movs={movs} salud={salud} onBack={() => setMascotaSel(null)} />
           : cliente ? <ClienteDetalle cliente={cliente} mascotas={mascotas} servicios={servicios} movs={movs} duenos={duenos} abrirMascota={(id) => setMascotaSel(id)} onBack={() => setClienteSel(null)} />
           : vista === "resumen" ? <Resumen datos={datos} irMascota={(id) => setMascotaSel(id)} />
@@ -1192,6 +1248,7 @@ function VistaCliente({ duenoId }) {
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
       <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div><div style={{ marginLeft: "auto" }}><Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} /></div></div></header>
       <main style={{ maxWidth: 760, margin: "0 auto", padding: "22px 18px 80px" }}>
+        <BannerInstalar />
         <Row between style={{ flexWrap: "wrap", gap: 10 }}><div><div style={{ fontSize: 14, color: T.muted }}>Hola,</div><H1>{cliente.nombre}</H1></div><Row style={{ gap: 8, flexWrap: "wrap" }}><button onClick={() => setSolicitar(true)} style={btnGhost} disabled={sus.length === 0}>📅 Solicitar cita</button><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Ver factura del mes</button></Row></Row>
         <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Información de tus mascotas y servicios prestados. Solo consulta.</p>
 
