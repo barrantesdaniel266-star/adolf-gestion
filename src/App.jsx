@@ -56,11 +56,38 @@ const fmt = (d) => d.toISOString().slice(0, 10);
 const inicioSemana = (base) => { const x = new Date(base); const off = (x.getDay() + 6) % 7; x.setDate(x.getDate() - off); x.setHours(0, 0, 0, 0); return x; };
 const diasEntre = (iso) => Math.round((new Date(iso + "T00:00:00") - new Date(hoy() + "T00:00:00")) / 86400000);
 
-function comprimirImagen(file, cb, max = 400, q = 0.8) {
-  const r = new FileReader();
-  r.onload = (e) => { const img = new Image(); img.onload = () => { let { width, height } = img; if (width > height && width > max) { height = (height * max) / width; width = max; } else if (height >= width && height > max) { width = (width * max) / height; height = max; } const c = document.createElement("canvas"); c.width = width; c.height = height; c.getContext("2d").drawImage(img, 0, 0, width, height); cb(c.toDataURL("image/jpeg", q)); }; img.src = e.target.result; };
-  r.readAsDataURL(file);
+function comprimirImagen(file, cb, max = 700, q = 0.78) {
+  let llamado = false;
+  const finish = (val) => { if (llamado) return; llamado = true; cb(val || null); };
+  try {
+    const r = new FileReader();
+    r.onerror = () => finish(null);
+    r.onload = (e) => {
+      const original = e.target.result;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          if (!width || !height) return finish(original);
+          const escala = Math.min(1, max / Math.max(width, height));
+          width = Math.max(1, Math.round(width * escala));
+          height = Math.max(1, Math.round(height * escala));
+          const c = document.createElement("canvas"); c.width = width; c.height = height;
+          c.getContext("2d").drawImage(img, 0, 0, width, height);
+          const data = c.toDataURL("image/jpeg", q);
+          finish(data && data.length > 20 ? data : original);
+        } catch { finish(original); }
+      };
+      img.onerror = () => finish(original); // formato no decodificable (p.ej. HEIC en algunos navegadores)
+      img.src = original;
+      setTimeout(() => finish(original), 7000); // red de seguridad si onload nunca dispara
+    };
+    r.readAsDataURL(file);
+  } catch { finish(null); }
 }
+const fotosDe = (m) => (m && Array.isArray(m.fotos) && m.fotos.length) ? m.fotos : (m && m.foto ? [m.foto] : []);
+const carnetsDe = (m) => (m && Array.isArray(m.carnets) && m.carnets.length) ? m.carnets : (m && m.carnet ? [m.carnet] : []);
+const pesoBase64 = (arr) => arr.reduce((a, s) => a + Math.ceil((s || "").length * 0.75), 0);
 const clienteDe = (m, duenos) => duenos.find((d) => d.id === m.duenoId) || { nombre: m.dueno || "—", telefono: m.telefono || "", email: m.email || "" };
 function totales(movs) {
   const cargos = movs.filter(esCargo), abonos = movs.filter(esAbono);
@@ -891,21 +918,56 @@ function CompartirCliente({ cliente, onClose }) {
 /* ====================== FORM MASCOTA ====================== */
 function FormMascota({ inicial, duenos, onClose }) {
   const editando = !!inicial.id;
-  const [f, setF] = useState({ tipo: "perro", nombre: "", raza: "", color: "", edad: "", duenoId: "", foto: "", carnet: "", ...inicial });
+  const [f, setF] = useState({ tipo: "perro", nombre: "", raza: "", color: "", edad: "", duenoId: "", ...inicial, fotos: fotosDe(inicial), carnets: carnetsDe(inicial) });
   const [g, setG] = useState(false); const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const fotoRef = useRef(null), carnetRef = useRef(null);
-  const subirFoto = (e) => { const file = e.target.files[0]; if (file) comprimirImagen(file, (d) => setF((p) => ({ ...p, foto: d })), 400, 0.8); e.target.value = ""; };
-  const subirCarnet = (e) => { const file = e.target.files[0]; if (file) comprimirImagen(file, (d) => setF((p) => ({ ...p, carnet: d })), 1000, 0.72); e.target.value = ""; };
-  const guardar = async () => { if (!f.nombre.trim()) return alert("El nombre es obligatorio."); if (!f.duenoId) return alert("Selecciona el cliente (dueño)."); setG(true); const data = { tipo: f.tipo, nombre: f.nombre.trim(), raza: f.raza.trim(), color: f.color.trim(), edad: f.edad.trim(), duenoId: f.duenoId, foto: f.foto || "", carnet: f.carnet || "" }; try { if (editando) await updateDoc(doc(db, "mascotas", f.id), data); else await addDoc(collection(db, "mascotas"), { ...data, createdAt: Date.now() }); onClose(); } catch (e) { alert("Error: " + e.message); setG(false); } };
+  const MAX_FOTOS = 8, MAX_CARNETS = 6;
+  const addFotos = (e) => {
+    const files = [...e.target.files]; e.target.value = "";
+    files.forEach((file) => comprimirImagen(file, (d) => { if (!d) return alert("No se pudo procesar una imagen. Intenta con otra."); setF((p) => { if ((p.fotos || []).length >= MAX_FOTOS) { alert(`Máximo ${MAX_FOTOS} fotos.`); return p; } return { ...p, fotos: [...(p.fotos || []), d] }; }); }, 700, 0.78));
+  };
+  const addCarnets = (e) => {
+    const files = [...e.target.files]; e.target.value = "";
+    files.forEach((file) => comprimirImagen(file, (d) => { if (!d) return alert("No se pudo procesar una imagen. Intenta con otra."); setF((p) => { if ((p.carnets || []).length >= MAX_CARNETS) { alert(`Máximo ${MAX_CARNETS} páginas de carnet.`); return p; } return { ...p, carnets: [...(p.carnets || []), d] }; }); }, 1100, 0.72));
+  };
+  const delFoto = (i) => setF((p) => ({ ...p, fotos: p.fotos.filter((_, j) => j !== i) }));
+  const delCarnet = (i) => setF((p) => ({ ...p, carnets: p.carnets.filter((_, j) => j !== i) }));
+  const guardar = async () => {
+    if (!f.nombre.trim()) return alert("El nombre es obligatorio.");
+    if (!f.duenoId) return alert("Selecciona el cliente (dueño).");
+    const fotos = f.fotos || [], carnets = f.carnets || [];
+    if (pesoBase64([...fotos, ...carnets]) > 950000) return alert("Las imágenes pesan demasiado en total. Quita alguna antes de guardar.");
+    setG(true);
+    const data = { tipo: f.tipo, nombre: f.nombre.trim(), raza: f.raza.trim(), color: f.color.trim(), edad: f.edad.trim(), duenoId: f.duenoId, fotos, carnets, foto: fotos[0] || "", carnet: carnets[0] || "" };
+    try { if (editando) await updateDoc(doc(db, "mascotas", f.id), data); else await addDoc(collection(db, "mascotas"), { ...data, createdAt: Date.now() }); onClose(); }
+    catch (e) { alert("Error al guardar: " + e.message); setG(false); }
+  };
+  const Miniatura = ({ src, onDel }) => (
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <img src={src} alt="" style={{ width: 64, height: 64, borderRadius: 12, objectFit: "cover", border: `1px solid ${T.line2}` }} />
+      <button type="button" onClick={onDel} style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 999, background: T.danger, color: "#fff", border: "none", fontSize: 12, lineHeight: 1, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+    </div>
+  );
+  const AddTile = ({ onClick, label }) => (
+    <button type="button" onClick={onClick} style={{ width: 64, height: 64, borderRadius: 12, border: `1.5px dashed ${T.line2}`, background: T.surface2, color: T.muted, cursor: "pointer", fontSize: 11, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2 }}><span style={{ fontSize: 18 }}>＋</span>{label}</button>
+  );
   return (
     <Modal title={editando ? "Editar mascota" : "Nueva mascota"} onClose={onClose}>
-      <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
-        <div style={{ textAlign: "center" }}><div style={{ width: 72, height: 72, borderRadius: 16, overflow: "hidden", background: T.surface2, border: `1px solid ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>{f.foto ? <img src={f.foto} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : emojiMascota(f.tipo)}</div><button type="button" onClick={() => fotoRef.current?.click()} style={{ ...btnGhost, marginTop: 8, padding: "6px 10px", fontSize: 12 }}>{f.foto ? "Cambiar" : "Foto"}</button><input ref={fotoRef} type="file" accept="image/*" onChange={subirFoto} style={{ display: "none" }} /></div>
-        <div style={{ textAlign: "center" }}><div style={{ width: 72, height: 72, borderRadius: 16, overflow: "hidden", background: T.surface2, border: `1px dashed ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>{f.carnet ? <img src={f.carnet} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "💉"}</div><button type="button" onClick={() => carnetRef.current?.click()} style={{ ...btnGhost, marginTop: 8, padding: "6px 10px", fontSize: 12 }}>{f.carnet ? "Cambiar" : "Carnet"}</button><input ref={carnetRef} type="file" accept="image/*" onChange={subirCarnet} style={{ display: "none" }} /></div>
-        <div style={{ alignSelf: "center", fontSize: 11.5, color: T.dim, flex: 1, minWidth: 110 }}>Foto de la mascota y del carnet de vacunas (opcionales).</div>
+      <Label>Fotos de la mascota</Label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14, marginTop: 4 }}>
+        {(f.fotos || []).map((src, i) => <Miniatura key={i} src={src} onDel={() => delFoto(i)} />)}
+        {(f.fotos || []).length < MAX_FOTOS && <AddTile onClick={() => fotoRef.current?.click()} label="Foto" />}
+        <input ref={fotoRef} type="file" accept="image/*" multiple onChange={addFotos} style={{ display: "none" }} />
       </div>
+      <Label>Carnet de vacunas</Label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6, marginTop: 4 }}>
+        {(f.carnets || []).map((src, i) => <Miniatura key={i} src={src} onDel={() => delCarnet(i)} />)}
+        {(f.carnets || []).length < MAX_CARNETS && <AddTile onClick={() => carnetRef.current?.click()} label="Carnet" />}
+        <input ref={carnetRef} type="file" accept="image/*" multiple onChange={addCarnets} style={{ display: "none" }} />
+      </div>
+      <div style={{ fontSize: 11, color: T.dim, marginBottom: 14 }}>Puedes agregar varias imágenes. Toca ＋ para añadir y la ✕ para quitar.</div>
       <Label>Cliente (dueño) *</Label><select value={f.duenoId} onChange={set("duenoId")} style={{ ...inp, marginBottom: 12 }}><option value="">Selecciona…</option>{duenos.map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}</select>
-      <Label>Tipo</Label><div style={{ display: "flex", gap: 8, marginBottom: 4 }}>{[["perro","🐕 Perro"],["gato","🐈 Gato"]].map(([k, l]) => <button key={k} onClick={() => setF({ ...f, tipo: k })} style={{ ...chip, ...(f.tipo === k ? chipOn : {}), flex: 1 }}>{l}</button>)}</div>
+      <Label>Tipo</Label><div style={{ display: "flex", gap: 8, marginBottom: 4 }}>{[["perro", "🐕 Perro"], ["gato", "🐈 Gato"]].map(([k, l]) => <button key={k} onClick={() => setF({ ...f, tipo: k })} style={{ ...chip, ...(f.tipo === k ? chipOn : {}), flex: 1 }}>{l}</button>)}</div>
       <Grid2><Campo label="Nombre *" value={f.nombre} onChange={set("nombre")} /><Campo label="Raza" value={f.raza} onChange={set("raza")} /><Campo label="Color" value={f.color} onChange={set("color")} /><Campo label="Edad" value={f.edad} onChange={set("edad")} ph="ej. 3 años" /></Grid2>
       <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={guardar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Guardando…" : "Guardar"}</button></Row>
     </Modal>
@@ -936,10 +998,11 @@ function MascotaDetalle({ mascota, duenos, servicios, movs, salud, onBack }) {
       <button onClick={onBack} style={{ ...btnGhost, marginBottom: 14 }}>← Volver</button>
       <Card>
         <Row between style={{ alignItems: "flex-start", flexWrap: "wrap", gap: 10 }}>
-          <Row style={{ gap: 14 }}><Avatar mascota={mascota} big onClick={mascota.foto ? () => setZoom(mascota.foto) : null} /><div><div style={{ fontSize: 26, fontWeight: 800, color: T.cream, fontFamily: display }}>{mascota.nombre}</div><div style={{ color: T.muted, fontSize: 13.5 }}>{emojiMascota(mascota.tipo)} {mascota.raza || "—"} · {mascota.color || "—"} · {mascota.edad || "—"}</div><div style={{ color: T.rustSoft, fontSize: 13, marginTop: 2 }}>Cliente: {cliente.nombre}</div></div></Row>
+          <Row style={{ gap: 14 }}><Avatar mascota={mascota} big onClick={fotosDe(mascota)[0] ? () => setZoom(fotosDe(mascota)[0]) : null} /><div><div style={{ fontSize: 26, fontWeight: 800, color: T.cream, fontFamily: display }}>{mascota.nombre}</div><div style={{ color: T.muted, fontSize: 13.5 }}>{emojiMascota(mascota.tipo)} {mascota.raza || "—"} · {mascota.color || "—"} · {mascota.edad || "—"}</div><div style={{ color: T.rustSoft, fontSize: 13, marginTop: 2 }}>Cliente: {cliente.nombre}</div></div></Row>
           <Row style={{ gap: 8 }}><button onClick={() => setEditar(true)} style={btnGhost}>Editar</button><button onClick={borrar} style={{ ...btnGhost, color: T.danger, borderColor: "#4a2a22" }}>Eliminar</button></Row>
         </Row>
-        {mascota.carnet && <div style={{ marginTop: 14 }}><Label>Carnet de vacunas</Label><img src={mascota.carnet} alt="Carnet" onClick={() => setZoom(mascota.carnet)} style={{ height: 80, borderRadius: 10, border: `1px solid ${T.line2}`, cursor: "zoom-in", objectFit: "cover" }} /></div>}
+        <Galeria titulo="Fotos" imgs={fotosDe(mascota)} onZoom={setZoom} />
+        <Galeria titulo="Carnet de vacunas" imgs={carnetsDe(mascota)} onZoom={setZoom} />
       </Card>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 12, marginTop: 16 }}>
@@ -1350,8 +1413,9 @@ function VistaCliente({ duenoId }) {
         {sus.length === 0 ? <Card style={{ marginTop: 18, textAlign: "center", padding: 36 }}><div style={{ fontSize: 34 }}>🐾</div><p style={{ color: T.muted, marginTop: 8 }}>Aún no hay mascotas registradas.</p></Card>
           : sus.map((m) => { const mm = movs.filter((x) => x.mascotaId === m.id && mesDe(x.fecha) === mes); const t = totales(mm); const tarifas = servicios.filter((s) => s.mascotaId === m.id); const vac = salud.filter((s) => s.mascotaId === m.id && s.proxima); return (
             <Card key={m.id} style={{ marginTop: 16 }}>
-              <Row style={{ gap: 12 }}><Avatar mascota={m} big onClick={m.foto ? () => setZoom(m.foto) : null} /><div><div style={{ fontSize: 19, fontWeight: 700, color: T.cream }}>{m.nombre}</div><div style={{ fontSize: 12.5, color: T.muted }}>{emojiMascota(m.tipo)} {m.raza || "—"} · {m.color || "—"} · {m.edad || "—"}</div></div></Row>
-              {m.carnet && <div style={{ marginTop: 12 }}><Label>Carnet de vacunas</Label><img src={m.carnet} alt="Carnet" onClick={() => setZoom(m.carnet)} style={{ height: 72, borderRadius: 10, border: `1px solid ${T.line2}`, cursor: "zoom-in", objectFit: "cover" }} /></div>}
+              <Row style={{ gap: 12 }}><Avatar mascota={m} big onClick={fotosDe(m)[0] ? () => setZoom(fotosDe(m)[0]) : null} /><div><div style={{ fontSize: 19, fontWeight: 700, color: T.cream }}>{m.nombre}</div><div style={{ fontSize: 12.5, color: T.muted }}>{emojiMascota(m.tipo)} {m.raza || "—"} · {m.color || "—"} · {m.edad || "—"}</div></div></Row>
+              <Galeria titulo="Fotos" imgs={fotosDe(m)} onZoom={setZoom} h={66} />
+              <Galeria titulo="Carnet de vacunas" imgs={carnetsDe(m)} onZoom={setZoom} h={66} />
               {vac.length > 0 && <div style={{ marginTop: 10, fontSize: 12, color: T.muted }}>Próximas: {vac.map((v) => `${v.titulo} (${v.proxima})`).join(" · ")}</div>}
               {tarifas.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12 }}>{tarifas.map((s) => { const i = servInfo(s.tipo); return <Pill key={s.id}>{i.icon} {i.nombre}: {money(s.valor)}{s.modalidad === "mensual" ? "/mes" : "/" + (s.unidad || i.unidad)}</Pill>; })}</div>}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 12 }}><MiniStat label="Facturado" value={money(t.facturado)} color={T.tan} /><MiniStat label="Cobrado" value={money(t.cobrado)} color={T.ok} /><MiniStat label={t.saldo >= 0 ? "Pendiente" : "A favor"} value={money(Math.abs(t.saldo))} color={t.saldo > 0 ? T.pend : T.ok} /></div>
@@ -1426,9 +1490,21 @@ function Lightbox({ src, onClose }) {
 }
 
 /* ====================== UI ====================== */
+function Galeria({ titulo, imgs, onZoom, h = 74 }) {
+  if (!imgs || !imgs.length) return null;
+  return (
+    <div style={{ marginTop: 14 }}>
+      <Label>{titulo}</Label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+        {imgs.map((src, i) => <img key={i} src={src} alt="" onClick={() => onZoom(src)} style={{ height: h, width: h, borderRadius: 10, border: `1px solid ${T.line2}`, cursor: "zoom-in", objectFit: "cover" }} />)}
+      </div>
+    </div>
+  );
+}
 function Avatar({ mascota, big, onClick }) {
   const sz = big ? 50 : 38; const clickable = !!onClick;
-  if (mascota && mascota.foto) return <img src={mascota.foto} alt="" onClick={onClick || undefined} style={{ width: sz, height: sz, borderRadius: 13, objectFit: "cover", border: `1px solid ${T.line2}`, flexShrink: 0, cursor: clickable ? "zoom-in" : "default" }} />;
+  const portada = fotosDe(mascota)[0];
+  if (portada) return <img src={portada} alt="" onClick={onClick || undefined} style={{ width: sz, height: sz, borderRadius: 13, objectFit: "cover", border: `1px solid ${T.line2}`, flexShrink: 0, cursor: clickable ? "zoom-in" : "default" }} />;
   return <div onClick={onClick || undefined} style={{ width: sz, height: sz, borderRadius: 13, background: T.surface2, border: `1px solid ${T.line2}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: big ? 26 : 19, flexShrink: 0, cursor: clickable ? "pointer" : "default" }}>{emojiMascota(mascota && mascota.tipo)}</div>;
 }
 function Stat({ label, value, accent, sub }) {
