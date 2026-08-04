@@ -4,6 +4,8 @@ import {
   collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, query, orderBy,
 } from "firebase/firestore";
 import logo from "./assets/logo.svg";
+import logoCara from "./assets/logo-cara.jpg";
+import logoCuerpo from "./assets/logo-cuerpo.jpg";
 
 /* ====================== TEMA ====================== */
 const T = {
@@ -18,13 +20,21 @@ const T = {
 const display = "'Barlow Condensed', system-ui, sans-serif";
 const TAGLINE = "🐾 Bienestar y mantenimiento para tu mascota";
 
+// Redes sociales (aparece en login, factura y portal del cliente)
+const INSTAGRAM = "adolfpets";
+const INSTAGRAM_URL = "https://instagram.com/adolfpets";
+
+// Recordatorio de baño: ciclo recomendado y días de anticipación del aviso
+const CICLO_BANO = 23; // cada cuántos días se recomienda bañar (edítalo aquí)
+const AVISO_BANO = 7;  // avisar N días antes del próximo baño
+
 // Medios de pago que aparecen en la factura (edítalos aquí cuando cambien)
 const PAGOS = [
   { label: "Ahorros Bancolombia", valor: "39700017536" },
   { label: "Llave Nequi", valor: "3145812053" },
 ];
 // Servicios que el cliente puede solicitar desde su enlace
-const TIPOS_CLIENTE = ["paseo", "bano", "hotel"];
+const TIPOS_CLIENTE = ["paseo", "bano", "banocor", "unas", "deslanado", "guarde", "hotel"];
 
 const USUARIO = "YELIANNY";
 const CLAVE   = "Nocopeo2626";
@@ -33,6 +43,8 @@ const SERVICIOS = [
   { id: "paseo",   nombre: "Paseo por horas",      icon: "🦮", unidad: "hora"   },
   { id: "bano",    nombre: "Baño",                 icon: "🛁", unidad: "sesión" },
   { id: "banocor", nombre: "Baño + corte",         icon: "✂️", unidad: "sesión" },
+  { id: "unas",    nombre: "Corte de uñas",        icon: "💅", unidad: "sesión" },
+  { id: "deslanado", nombre: "Deslanado / desenredado", icon: "🪮", unidad: "sesión" },
   { id: "hotel",   nombre: "Hotel por noches",     icon: "🏨", unidad: "noche"  },
   { id: "guarde",  nombre: "Guardería por horas",  icon: "🐾", unidad: "hora"   },
   { id: "adiestr", nombre: "Adiestramiento",       icon: "🎓", unidad: "sesión" },
@@ -55,6 +67,7 @@ const pagado = (m) => m.estado === "pagado";
 const fmt = (d) => d.toISOString().slice(0, 10);
 const inicioSemana = (base) => { const x = new Date(base); const off = (x.getDay() + 6) % 7; x.setDate(x.getDate() - off); x.setHours(0, 0, 0, 0); return x; };
 const diasEntre = (iso) => Math.round((new Date(iso + "T00:00:00") - new Date(hoy() + "T00:00:00")) / 86400000);
+const sumarDias = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
 function comprimirImagen(file, cb, max = 700, q = 0.78) {
   let llamado = false;
@@ -89,6 +102,34 @@ const fotosDe = (m) => (m && Array.isArray(m.fotos) && m.fotos.length) ? m.fotos
 const carnetsDe = (m) => (m && Array.isArray(m.carnets) && m.carnets.length) ? m.carnets : (m && m.carnet ? [m.carnet] : []);
 const pesoBase64 = (arr) => arr.reduce((a, s) => a + Math.ceil((s || "").length * 0.75), 0);
 const clienteDe = (m, duenos) => duenos.find((d) => d.id === m.duenoId) || { nombre: m.dueno || "—", telefono: m.telefono || "", email: m.email || "" };
+
+/* --- Recordatorio de baño (ciclo de CICLO_BANO días; el aviso salta AVISO_BANO días antes) --- */
+function banosPorRecordar(mascotas, movs, duenos) {
+  const res = [];
+  mascotas.forEach((m) => {
+    const banos = movs
+      .filter((x) => esCargo(x) && (x.tipoServicio === "bano" || x.tipoServicio === "banocor") && x.mascotaId === m.id && x.fecha)
+      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+    if (!banos.length) return; // sin baño registrado no hay fecha base
+    const ultima = banos[0].fecha;
+    const proxima = sumarDias(ultima, CICLO_BANO);
+    const dias = diasEntre(proxima); // días hasta el próximo baño recomendado
+    if (dias <= AVISO_BANO) res.push({ mascota: m, cliente: clienteDe(m, duenos), ultima, proxima, dias });
+  });
+  return res.sort((a, b) => a.dias - b.dias);
+}
+function leerRecordadosBano() { try { return JSON.parse(localStorage.getItem("adolf_bano_recordado") || "{}"); } catch { return {}; } }
+function marcarRecordadoBano(it) { const map = leerRecordadosBano(); map[it.mascota.id] = it.ultima; try { localStorage.setItem("adolf_bano_recordado", JSON.stringify(map)); } catch {} }
+function yaRecordadoBano(it) { return leerRecordadosBano()[it.mascota.id] === it.ultima; }
+function msgBano(it) {
+  const d = it.dias;
+  const cuando = d < 0 ? `y desde hace ${Math.abs(d)} día${Math.abs(d) !== 1 ? "s" : ""} ya sería momento del próximo`
+    : d === 0 ? "y hoy sería momento del próximo"
+    : d === 1 ? "y mañana recomendamos el próximo"
+    : `y en unos ${d} días recomendamos el próximo`;
+  return `Hola ${it.cliente.nombre} 🐾 El último baño de ${it.mascota.nombre} fue el ${it.ultima}. En ADOLF recomendamos un baño cada ${CICLO_BANO} días, ${cuando} 🛁. ¿Deseas que lo agendemos?`;
+}
+
 function totales(movs) {
   const cargos = movs.filter(esCargo), abonos = movs.filter(esAbono);
   const facturado = cargos.reduce((a, m) => a + Number(m.monto || 0), 0);
@@ -243,7 +284,7 @@ function BannerInstalar() {
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(180deg,#33271a,#2b2218)", border: `1px solid ${T.rust}`, borderRadius: 14, padding: "11px 14px", marginBottom: 16, boxShadow: T.shadow, animation: "pop .3s ease" }}>
-        <img src={logo} alt="" style={{ height: 34, width: "auto", flexShrink: 0 }} />
+        <img src={logoCara} alt="" style={{ height: 40, width: 40, borderRadius: 11, objectFit: "cover", flexShrink: 0, border: `1px solid ${T.line2}` }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, color: T.cream }}>Instala ADOLF en tu celular</div>
           <div style={{ fontSize: 11.5, color: T.muted }}>Acceso rápido, como una app, desde tu pantalla de inicio.</div>
@@ -337,7 +378,11 @@ function Login({ onOk }) {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: `radial-gradient(1200px 600px at 50% -10%, #36291d 0%, ${T.bg} 60%)`, padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 380, animation: "pop .4s ease" }}>
-        <div style={{ textAlign: "center", marginBottom: 26 }}><img src={logo} alt="" style={{ height: 96 }} /><div style={{ fontFamily: display, fontSize: 52, fontWeight: 700, letterSpacing: 6, color: T.cream, lineHeight: 1, marginTop: 6 }}>ADOLF</div><div style={{ color: T.rust, fontSize: 11.5, marginTop: 6, fontWeight: 600 }}>{TAGLINE}</div></div>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <img src={logoCuerpo} alt="ADOLF" style={{ width: "100%", maxWidth: 290, borderRadius: 18, border: `1px solid ${T.line2}`, boxShadow: "0 12px 40px rgba(0,0,0,.45)" }} />
+          <div style={{ color: T.rust, fontSize: 12, marginTop: 12, fontWeight: 600 }}>{TAGLINE}</div>
+          <div style={{ marginTop: 12 }}><Instagram compact /></div>
+        </div>
         <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 18, padding: 22, boxShadow: T.shadow }}>
           <Label>Usuario</Label><input value={u} onChange={(e) => setU(e.target.value)} placeholder="Yelianny" style={inp} onKeyDown={(e) => e.key === "Enter" && enviar()} />
           <div style={{ height: 14 }} /><Label>Contraseña</Label><input type="password" value={p} onChange={(e) => setP(e.target.value)} placeholder="••••••••" style={inp} onKeyDown={(e) => e.key === "Enter" && enviar()} />
@@ -397,15 +442,16 @@ function Panel({ onLogout }) {
   const reset = (v) => { setVista(v); setClienteSel(null); setMascotaSel(null); };
   const irANoti = (n) => { if (n && n.accion === "agenda") reset("agenda"); };
   const citasHoy = citas.filter((c) => c.fecha === hoy() && c.estado !== "completado").length;
+  const clientesPorCobrar = duenos.filter((d) => { const ids = mascotas.filter((m) => m.duenoId === d.id).map((m) => m.id); return totales(movs.filter((m) => ids.includes(m.mascotaId))).saldo > 0; }).length;
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
       <header style={{ position: "sticky", top: 0, zIndex: 20, background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", backdropFilter: "blur(8px)", borderBottom: `1px solid ${T.line}` }}>
         <div className="adolf-header" style={{ maxWidth: 1100, margin: "0 auto", padding: "11px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <img src={logo} alt="" style={{ height: 38, cursor: "pointer" }} onClick={() => reset("resumen")} />
+          <img src={logoCara} alt="" style={{ height: 40, width: 40, borderRadius: 11, objectFit: "cover", cursor: "pointer", border: `1px solid ${T.line2}` }} onClick={() => reset("resumen")} />
           <div style={{ cursor: "pointer" }} onClick={() => reset("resumen")}><div style={{ fontFamily: display, fontSize: 27, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 9.5, color: T.rust, letterSpacing: 2.5, textTransform: "uppercase" }}>Gestión de servicios</div></div>
           <nav style={{ marginLeft: "auto", display: "flex", gap: 4, background: T.surface, borderRadius: 12, padding: 4, border: `1px solid ${T.line}`, flexWrap: "wrap" }}>
-            {[["resumen","Resumen"],["clientes","Clientes"],["agenda", citasHoy ? `Agenda (${citasHoy})` : "Agenda"],["servicios","Servicios"]].map(([k, l]) => (
+            {[["resumen","Resumen"],["clientes","Clientes"],["agenda", citasHoy ? `Agenda (${citasHoy})` : "Agenda"],["servicios","Servicios"],["cobros", clientesPorCobrar ? `Por cobrar (${clientesPorCobrar})` : "Por cobrar"]].map(([k, l]) => (
               <button key={k} onClick={() => reset(k)} style={tab(vista === k && !clienteSel && !mascotaSel)}>{l}</button>
             ))}
           </nav>
@@ -421,6 +467,7 @@ function Panel({ onLogout }) {
           : vista === "resumen" ? <Resumen datos={datos} irMascota={(id) => setMascotaSel(id)} />
           : vista === "clientes" ? <Clientes duenos={duenos} mascotas={mascotas} abrir={(id) => setClienteSel(id)} abrirMascota={(id) => setMascotaSel(id)} />
           : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} movs={movs} bloqueos={bloqueos} />
+          : vista === "cobros" ? <Cobros duenos={duenos} mascotas={mascotas} movs={movs} abrir={(id) => setClienteSel(id)} />
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
       </main>
       {noti.toast && <Toast noti={noti.toast} onClose={noti.cerrarToast} onIr={irANoti} />}
@@ -433,6 +480,7 @@ function Panel({ onLogout }) {
 function Resumen({ datos, irMascota }) {
   const { duenos, mascotas, servicios, movs, citas, salud } = datos;
   const [mes, setMes] = useState(mesActual());
+  const [banoTick, setBanoTick] = useState(0);
   const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
   const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
 
@@ -451,6 +499,11 @@ function Resumen({ datos, irMascota }) {
   // alertas de vacunas
   const alertasVac = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30).map((s) => { const m = mascotas.find((x) => x.id === s.mascotaId); return { ...s, mascota: m, dias: diasEntre(s.proxima) }; }).filter((x) => x.mascota).sort((a, b) => a.dias - b.dias);
 
+  // recordatorios de baño (ciclo de CICLO_BANO días); se ocultan los ya recordados
+  const banos = useMemo(() => banosPorRecordar(mascotas, movs, duenos).filter((it) => !yaRecordadoBano(it)), [mascotas, movs, duenos, banoTick]);
+  const recordarBano = (it) => { const tel = waTel(it.cliente.telefono); if (tel) window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msgBano(it))}`, "_blank"); marcarRecordadoBano(it); setBanoTick((x) => x + 1); };
+  const descartarBano = (it) => { marcarRecordadoBano(it); setBanoTick((x) => x + 1); };
+
   return (
     <div style={{ animation: "pop .35s ease" }}>
       <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Resumen del mes</H1>
@@ -463,6 +516,29 @@ function Resumen({ datos, irMascota }) {
         <Stat label={t.saldo >= 0 ? "Saldo pendiente" : "Saldo a favor"} value={money(Math.abs(t.saldo))} accent={t.saldo > 0 ? T.pend : T.ok} sub={`${pendientes.length} clientes deben`} />
         <Stat label="Clientes" value={duenos.length} accent={T.rust} sub={`${mascotas.length} mascotas`} />
       </div>
+
+      {banos.length > 0 && (
+        <Card style={{ marginTop: 16, borderColor: T.info }}>
+          <Row style={{ gap: 10, alignItems: "center" }}>
+            <img src={logoCara} alt="" style={{ height: 30, width: 30, borderRadius: 8, objectFit: "cover", border: `1px solid ${T.line2}` }} />
+            <H2>🛁 Baños por recordar</H2>
+          </Row>
+          <p style={{ fontSize: 12, color: T.muted, margin: "6px 0 8px" }}>Mascotas próximas a cumplir su ciclo de baño (cada {CICLO_BANO} días). Avisa al cliente con un toque de WhatsApp.</p>
+          {banos.map((it, i) => { const tel = waTel(it.cliente.telefono); return (
+            <Row key={it.mascota.id} between style={{ padding: "9px 0", borderBottom: i < banos.length - 1 ? `1px solid ${T.line}` : "none", gap: 8, flexWrap: "wrap" }}>
+              <div style={{ cursor: "pointer", minWidth: 0 }} onClick={() => irMascota(it.mascota.id)}>
+                <b style={{ fontSize: 13.5 }}>{emojiMascota(it.mascota.tipo)} {it.mascota.nombre}</b>
+                <div style={{ fontSize: 11.5, color: T.muted }}>{it.cliente.nombre} · último baño {it.ultima} · {it.dias < 0 ? `atrasado ${Math.abs(it.dias)} d` : it.dias === 0 ? "toca hoy" : `en ${it.dias} d`}</div>
+              </div>
+              <Row style={{ gap: 6 }}>
+                <button onClick={() => { navigator.clipboard?.writeText(msgBano(it)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
+                <button onClick={() => descartarBano(it)} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Marcar como recordado">✓</button>
+                <button onClick={() => recordarBano(it)} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Recordar</button>
+              </Row>
+            </Row>
+          ); })}
+        </Card>
+      )}
 
       {alertasVac.length > 0 && (
         <Card style={{ marginTop: 16, borderColor: T.pend }}>
@@ -538,12 +614,36 @@ function RecordatoriosVacunas({ alertas, onClose }) {
   );
 }
 
+/* ====================== RECORDATORIOS DE BAÑO ====================== */
+function RecordatoriosBano({ lista, onClose }) {
+  const [tick, setTick] = useState(0);
+  const items = lista.filter((it) => !yaRecordadoBano(it));
+  const recordar = (it) => { const tel = waTel(it.cliente.telefono); if (tel) window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msgBano(it))}`, "_blank"); marcarRecordadoBano(it); setTick((t) => t + 1); };
+  const descartar = (it) => { marcarRecordadoBano(it); setTick((t) => t + 1); };
+  return (
+    <Modal title="Recordatorios de baño" onClose={onClose}>
+      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Mascotas próximas a su próximo baño (ciclo de {CICLO_BANO} días; el aviso aparece {AVISO_BANO} días antes). Envía el recordatorio con un toque.</p>
+      {items.length === 0 ? <Empty texto="Ninguna mascota por recordar ahora. 🎉" /> : items.map((it) => { const tel = waTel(it.cliente.telefono); return (
+        <Row key={it.mascota.id} between style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
+          <div><b style={{ fontSize: 14 }}>{emojiMascota(it.mascota.tipo)} {it.mascota.nombre}</b><div style={{ fontSize: 12, color: it.dias < 0 ? T.danger : T.info }}>{it.cliente.nombre} · último {it.ultima} · {it.dias < 0 ? `atrasado ${Math.abs(it.dias)} d` : it.dias === 0 ? "hoy" : `en ${it.dias} d`}</div></div>
+          <Row style={{ gap: 6 }}>
+            <button onClick={() => { navigator.clipboard?.writeText(msgBano(it)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
+            <button onClick={() => descartar(it)} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Marcar como recordado">✓</button>
+            <button onClick={() => recordar(it)} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Recordar</button>
+          </Row>
+        </Row>
+      ); })}
+    </Modal>
+  );
+}
+
 /* ====================== PANEL DE ADMINISTRACIÓN ====================== */
 function AdminPanel({ datos, onClose }) {
   const { duenos, mascotas, servicios, movs, citas, salud } = datos;
   const [mes, setMes] = useState(mesActual());
   const [recordatorios, setRecordatorios] = useState(false);
   const [vacunas, setVacunas] = useState(false);
+  const [banos, setBanos] = useState(false);
   const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
   const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
   const porTipo = SERVICIOS.map((s) => { const it = t.cargos.filter((m) => m.tipoServicio === s.id); return { ...s, total: it.reduce((a, m) => a + Number(m.monto || 0), 0), n: it.length }; }).filter((x) => x.n > 0).sort((a, b) => b.total - a.total);
@@ -551,6 +651,7 @@ function AdminPanel({ datos, onClose }) {
   const pendientes = porCliente.filter((c) => c.saldo > 0);
   const ultBackup = Number(localStorage.getItem("adolf_backup_last") || 0);
   const alertasVac = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30).map((s) => { const m = mascotas.find((x) => x.id === s.mascotaId); return m ? { ...s, mascota: m, cliente: clienteDe(m, duenos), dias: diasEntre(s.proxima) } : null; }).filter(Boolean).sort((a, b) => a.dias - b.dias);
+  const listaBanos = banosPorRecordar(mascotas, movs, duenos).filter((it) => !yaRecordadoBano(it));
 
   const exportarCSV = () => {
     const filas = [["Fecha", "Cliente", "Mascota", "Tipo", "Concepto", "Cantidad", "Monto", "Pago"]];
@@ -567,14 +668,14 @@ function AdminPanel({ datos, onClose }) {
     const fCli = porCliente.map((c) => `<tr><td>${c.nombre}</td><td class="r">${money(c.facturado)}</td><td class="r">${money(c.cobrado)}</td><td class="r">${money(c.saldo)}</td></tr>`).join("") || '<tr><td colspan="4" style="color:#999">Sin datos</td></tr>';
     const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Reporte ADOLF ${nombreMes(mes)}</title>
       <style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:680px;margin:0 auto}
-      .head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:12px}.brand{font-size:32px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}
+      .head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #d2772f;padding-bottom:12px}.brand{font-size:32px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}
       h2{font-size:14px;text-transform:uppercase;color:#d2772f;margin:22px 0 6px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #eee}th{font-size:11px;color:#999;text-transform:uppercase}.r{text-align:right}
-      .tot{display:flex;gap:24px;margin-top:14px;font-size:14px}.tot b{display:block;font-size:20px}.foot{margin-top:26px;text-align:center;font-family:sans-serif;font-weight:800;letter-spacing:3px;font-size:18px}</style></head>
-      <body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div style="text-align:right;font-size:12px;color:#555"><b>Reporte mensual</b><br>${nombreMes(mes)}<br>${hoy()}</div></div>
+      .tot{display:flex;gap:24px;margin-top:14px;font-size:14px}.tot b{display:block;font-size:20px}.foot{margin-top:26px;text-align:center;font-family:sans-serif;font-weight:800;letter-spacing:3px;font-size:18px}.ig{text-align:center;color:#c837ab;font-size:12px;margin-top:6px;font-family:Arial}</style></head>
+      <body><div class="wrap"><div class="head"><div style="display:flex;align-items:center;gap:12px"><img src="${logoCara}" style="height:52px;width:52px;border-radius:10px;object-fit:cover"/><div class="brand">ADOLF<small>${TAGLINE}</small></div></div><div style="text-align:right;font-size:12px;color:#555"><b>Reporte mensual</b><br>${nombreMes(mes)}<br>${hoy()}</div></div>
       <div class="tot"><div>Facturado<b>${money(t.facturado)}</b></div><div>Cobrado<b style="color:#2f8f3a">${money(t.cobrado)}</b></div><div>Saldo<b style="color:#c47d10">${money(t.saldo)}</b></div></div>
       <h2>Ingresos por servicio</h2><table><thead><tr><th>Servicio</th><th class="r">Cant.</th><th class="r">Total</th></tr></thead><tbody>${fTipo}</tbody></table>
       <h2>Por cliente</h2><table><thead><tr><th>Cliente</th><th class="r">Facturado</th><th class="r">Cobrado</th><th class="r">Saldo</th></tr></thead><tbody>${fCli}</tbody></table>
-      <div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
+      <div class="foot">ADOLF</div><div class="ig">Instagram · @${INSTAGRAM}</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
     const w = window.open("", "_blank"); if (!w) return alert("Permite las ventanas emergentes."); w.document.write(html); w.document.close();
   };
   const respaldo = () => {
@@ -594,6 +695,7 @@ function AdminPanel({ datos, onClose }) {
       <Label>Mes para reportes y exportación</Label>
       <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, marginBottom: 16 }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
 
+      {opcion("🛁", `Recordatorios de baño${listaBanos.length ? ` (${listaBanos.length})` : ""}`, listaBanos.length ? "Avisar por WhatsApp del próximo baño" : "Ninguna mascota por recordar ahora", () => listaBanos.length && setBanos(true), { disabled: listaBanos.length === 0 })}
       {opcion("📣", `Recordatorios de pago${pendientes.length ? ` (${pendientes.length})` : ""}`, pendientes.length ? "Avisar por WhatsApp a quienes deben" : "Nadie tiene saldo pendiente este mes", () => pendientes.length && setRecordatorios(true), { disabled: pendientes.length === 0 })}
       {opcion("💉", `Recordatorios de vacunas${alertasVac.length ? ` (${alertasVac.length})` : ""}`, alertasVac.length ? "Avisar a clientes por WhatsApp" : "Ninguna vacuna próxima o vencida", () => alertasVac.length && setVacunas(true), { disabled: alertasVac.length === 0 })}
       {opcion("📊", "Exportar a Excel (CSV)", `Detalle de movimientos de ${nombreMes(mes)}`, exportarCSV)}
@@ -601,6 +703,8 @@ function AdminPanel({ datos, onClose }) {
       {opcion("💾", "Descargar respaldo", ultBackup ? `Última copia: ${new Date(ultBackup).toLocaleDateString("es-CO")}` : "Aún no has descargado un respaldo", respaldo)}
 
       <p style={{ fontSize: 11.5, color: T.dim, marginTop: 8, lineHeight: 1.6 }}>El respaldo descarga todos tus datos en un archivo. Guárdalo en un lugar seguro (correo, nube o computador) cada cierto tiempo.</p>
+      <div style={{ textAlign: "center", marginTop: 14 }}><Instagram compact /></div>
+      {banos && <RecordatoriosBano lista={banosPorRecordar(mascotas, movs, duenos)} onClose={() => setBanos(false)} />}
       {recordatorios && <RecordatoriosPago pendientes={pendientes} duenos={duenos} mes={mes} onClose={() => setRecordatorios(false)} />}
       {vacunas && <RecordatoriosVacunas alertas={alertasVac} onClose={() => setVacunas(false)} />}
     </Modal>
@@ -630,17 +734,25 @@ function PickerDia({ fecha, setFecha, bloqueos = [], dias = 21 }) {
   );
 }
 
-function PickerHora({ fecha, hora, setHora, citas = [], bloqueos = [], tipoServicio }) {
-  const ocupadas = citas.filter((c) => c.fecha === fecha && (c.estado || "agendado") === "agendado").map((c) => c.hora);
+/* Las horas ya NO se bloquean por tener citas: se pueden agendar varios servicios
+   a la misma hora (mismo o distintos perros/gatos). Solo bloquean los "bloqueos" del admin.
+   El punto naranja indica cuántos servicios ya hay en esa hora (informativo). */
+function PickerHora({ fecha, hora, setHora, citas = [], bloqueos = [], tipoServicio, multi }) {
+  const ocup = {};
+  citas.filter((c) => c.fecha === fecha && (c.estado || "agendado") !== "rechazado").forEach((c) => { ocup[c.hora] = (ocup[c.hora] || 0) + 1; });
   const bloqSlot = bloqueos.filter((b) => b.fecha === fecha && b.hora).map((b) => b.hora);
   const slots = SLOTS_HORA.filter((s) => !limitadoTarde(tipoServicio) || s <= TOPE_TARDE);
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
-        {slots.map((s) => { const no = ocupadas.includes(s) || bloqSlot.includes(s); const sel = hora === s; return (
-          <button key={s} disabled={no} onClick={() => setHora(s)} style={{ padding: "9px 0", borderRadius: 9, border: `1px solid ${sel ? T.rust : T.line2}`, background: sel ? "#4a2f17" : T.surface2, color: no ? T.dim : (sel ? T.rustSoft : T.text), cursor: no ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, textDecoration: no ? "line-through" : "none", opacity: no ? .45 : 1 }}>{s}</button>); })}
+        {slots.map((s) => { const bloq = bloqSlot.includes(s); const n = ocup[s] || 0; const sel = hora === s; return (
+          <button key={s} disabled={bloq} onClick={() => setHora(s)} style={{ position: "relative", padding: "9px 0", borderRadius: 9, border: `1px solid ${sel ? T.rust : T.line2}`, background: sel ? "#4a2f17" : T.surface2, color: bloq ? T.dim : (sel ? T.rustSoft : T.text), cursor: bloq ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, textDecoration: bloq ? "line-through" : "none", opacity: bloq ? .45 : 1 }}>
+            {s}
+            {n > 0 && !bloq && <span title={`${n} servicio(s) en esta hora`} style={{ position: "absolute", top: 3, right: 5, fontSize: 9, fontWeight: 800, color: T.rustSoft }}>•{n}</span>}
+          </button>); })}
       </div>
       {limitadoTarde(tipoServicio) && <div style={{ fontSize: 11, color: T.dim, marginTop: 6 }}>Paseo y baño solo hasta las 6:00 PM.</div>}
+      {multi && <div style={{ fontSize: 11, color: T.dim, marginTop: 6 }}>Puedes agendar varios servicios en la misma hora. El punto naranja indica cuántos ya hay.</div>}
     </div>
   );
 }
@@ -749,7 +861,7 @@ function Agenda({ mascotas, servicios, citas, movs, bloqueos = [] }) {
           })}
         </div>
       </div>
-      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Las citas 🔔 son solicitudes de clientes por confirmar. Toca <b>Agendado</b> para marcar el servicio como <b>Completado</b>: se factura solo y aparece en Servicios y en la factura del mes.</p>
+      <p style={{ fontSize: 11.5, color: T.dim, marginTop: 10 }}>Las citas 🔔 son solicitudes de clientes por confirmar. Toca <b>Agendado</b> para marcar el servicio como <b>Completado</b>: se factura solo y aparece en Servicios y en la factura del mes. Puedes agendar varios servicios a la misma hora.</p>
       {form && <FormCita mascotas={mascotas} citas={citas} bloqueos={bloqueos} onClose={() => setForm(null)} />}
       {bloqueo && <FormBloqueo bloqueos={bloqueos} onClose={() => setBloqueo(false)} />}
     </div>
@@ -807,7 +919,7 @@ function FormCita({ mascotas, citas = [], bloqueos = [], onClose }) {
       <div style={{ height: 12 }} /><Label>Fecha</Label>
       <PickerDia fecha={fecha} setFecha={(f) => { setFecha(f); setHora(""); }} bloqueos={bloqueos} />
       <div style={{ height: 8 }} /><Label>Hora</Label>
-      <PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={citas} bloqueos={bloqueos} tipoServicio={tipoServicio} />
+      <PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={citas} bloqueos={bloqueos} tipoServicio={tipoServicio} multi />
       <div style={{ height: 12 }} /><Label>Nota (opcional)</Label><input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="ej. recoger en casa" style={inp} />
       <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={guardar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Guardando…" : "Agendar"}</button></Row>
     </Modal>
@@ -902,7 +1014,7 @@ function CompartirCliente({ cliente, onClose }) {
   const link = `${window.location.origin}/c/${cliente.id}`;
   const [copiado, setCopiado] = useState(false);
   const tel = waTel(cliente.telefono);
-  const msgWA = `Hola ${cliente.nombre} 🐾 Este es tu acceso personal a ADOLF.\n\nDesde este enlace puedes:\n• Agendar paseos, baños y hotel\n• Ver la información de tus mascotas\n• Consultar tus servicios, facturas y saldos\n• Recibir avisos cuando confirmemos tus citas\n\nGuárdalo, es solo para ti:\n${link}`;
+  const msgWA = `Hola ${cliente.nombre} 🐾 Este es tu acceso personal a ADOLF.\n\nDesde este enlace puedes:\n• Agendar paseos, baños y hotel\n• Ver la información de tus mascotas\n• Consultar tus servicios, facturas y saldos\n• Recibir avisos cuando confirmemos tus citas\n\nGuárdalo, es solo para ti:\n${link}\n\nSíguenos en Instagram: @${INSTAGRAM}`;
   return (
     <Modal title="Compartir con el cliente" onClose={onClose}>
       <p style={{ fontSize: 13, color: T.muted, marginBottom: 14 }}>Enlace personal para <b style={{ color: T.text }}>{cliente.nombre}</b>: puede agendar citas y consultar sus mascotas, servicios y cuenta.</p>
@@ -1161,6 +1273,7 @@ function Factura({ cliente, grupos, mes, onClose }) {
     });
     t += `\n*Total servicios: ${money(facturado)}*\n*Cobrado: ${money(cobrado)}*\n*SALDO ${saldo >= 0 ? "PENDIENTE" : "A FAVOR"}: ${money(Math.abs(saldo))}*`;
     t += `\n\n*Medios de pago*\n` + PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n");
+    t += `\n\nSíguenos en Instagram: @${INSTAGRAM}`;
     return t;
   };
   const imprimir = () => {
@@ -1170,13 +1283,13 @@ function Factura({ cliente, grupos, mes, onClose }) {
       const fa = ab ? `<tr><td>Abonos / pagos</td><td class="r">—</td><td class="r">− ${money(ab)}</td></tr>` : "";
       return `<h2>${emojiMascota(g.mascota.tipo)} ${g.mascota.nombre}</h2><table><thead><tr><th>Servicio</th><th class="r">Cantidad</th><th class="r">Total</th></tr></thead><tbody>${fc || '<tr><td colspan="3" style="color:#999">Sin servicios</td></tr>'}${fa}</tbody></table>`;
     }).join("");
-    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Factura ${cliente.nombre}</title><style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:660px;margin:0 auto}.head{display:flex;justify-content:space-between;border-bottom:3px solid #d2772f;padding-bottom:14px}.brand{font-size:34px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}.meta{text-align:right;font-size:12px;color:#555;line-height:1.6}h2{font-size:15px;margin:20px 0 6px}.cli{font-size:14px;margin-top:14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eee}th{font-size:11px;text-transform:uppercase;color:#999}.r{text-align:right}.tot{margin-top:22px;margin-left:auto;width:300px;font-size:14px}.tot div{display:flex;justify-content:space-between;padding:6px 0}.tot .big{border-top:2px solid #1c1712;margin-top:6px;padding-top:10px;font-size:19px;font-weight:800}.pend{color:#c47d10}.fav{color:#2f8f3a}.pagos{margin-top:22px;padding:12px 14px;background:#faf3ea;border:1px solid #ecd9c2;border-radius:10px;font-size:13px;line-height:1.7}.pagos b.t{display:block;color:#d2772f;text-transform:uppercase;font-size:11px;letter-spacing:.5px;margin-bottom:4px}.foot{margin-top:24px;text-align:center;font-weight:800;letter-spacing:3px;font-size:18px}</style></head><body><div class="wrap"><div class="head"><div class="brand">ADOLF<small>${TAGLINE}</small></div><div class="meta"><b>Estado de cuenta</b><br>${nombreMes(mes)}<br>Emitido: ${hoy()}</div></div><div class="cli"><b>Cliente:</b> ${cliente.nombre}${cliente.telefono ? " · " + cliente.telefono : ""}</div>${secc}<div class="tot"><div><span>Total servicios</span><b>${money(facturado)}</b></div><div><span>Cobrado</span><b>− ${money(cobrado)}</b></div><div class="big ${saldo >= 0 ? "pend" : "fav"}"><span>Saldo ${saldo >= 0 ? "pendiente" : "a favor"}</span><span>${money(Math.abs(saldo))}</span></div></div><div class="pagos"><b class="t">Medios de pago</b>${PAGOS.map((p) => `${p.label}: <b>${p.valor}</b>`).join("<br>")}</div><div class="foot">ADOLF</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
+    const html = `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Factura ${cliente.nombre}</title><style>*{box-sizing:border-box;font-family:Arial}body{margin:0;padding:32px;color:#1c1712}.wrap{max-width:660px;margin:0 auto}.head{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #d2772f;padding-bottom:14px}.brandwrap{display:flex;align-items:center;gap:12px}.brandwrap img{height:54px;width:54px;border-radius:11px;object-fit:cover}.brand{font-size:34px;font-weight:800;letter-spacing:3px}.brand small{display:block;font-size:11px;color:#d2772f;font-weight:700}.meta{text-align:right;font-size:12px;color:#555;line-height:1.6}.ig{text-align:center;color:#c837ab;font-size:12px;margin-top:6px}h2{font-size:15px;margin:20px 0 6px}.cli{font-size:14px;margin-top:14px}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eee}th{font-size:11px;text-transform:uppercase;color:#999}.r{text-align:right}.tot{margin-top:22px;margin-left:auto;width:300px;font-size:14px}.tot div{display:flex;justify-content:space-between;padding:6px 0}.tot .big{border-top:2px solid #1c1712;margin-top:6px;padding-top:10px;font-size:19px;font-weight:800}.pend{color:#c47d10}.fav{color:#2f8f3a}.pagos{margin-top:22px;padding:12px 14px;background:#faf3ea;border:1px solid #ecd9c2;border-radius:10px;font-size:13px;line-height:1.7}.pagos b.t{display:block;color:#d2772f;text-transform:uppercase;font-size:11px;letter-spacing:.5px;margin-bottom:4px}.foot{margin-top:24px;text-align:center;font-weight:800;letter-spacing:3px;font-size:18px}</style></head><body><div class="wrap"><div class="head"><div class="brandwrap"><img src="${logoCara}"/><div class="brand">ADOLF<small>${TAGLINE}</small></div></div><div class="meta"><b>Estado de cuenta</b><br>${nombreMes(mes)}<br>Emitido: ${hoy()}</div></div><div class="cli"><b>Cliente:</b> ${cliente.nombre}${cliente.telefono ? " · " + cliente.telefono : ""}</div>${secc}<div class="tot"><div><span>Total servicios</span><b>${money(facturado)}</b></div><div><span>Cobrado</span><b>− ${money(cobrado)}</b></div><div class="big ${saldo >= 0 ? "pend" : "fav"}"><span>Saldo ${saldo >= 0 ? "pendiente" : "a favor"}</span><span>${money(Math.abs(saldo))}</span></div></div><div class="pagos"><b class="t">Medios de pago</b>${PAGOS.map((p) => `${p.label}: <b>${p.valor}</b>`).join("<br>")}</div><div class="foot">ADOLF</div><div class="ig">Instagram · @${INSTAGRAM}</div></div><script>window.onload=function(){window.print()}<\/script></body></html>`;
     const w = window.open("", "_blank"); if (!w) return alert("Permite las ventanas emergentes."); w.document.write(html); w.document.close();
   };
   return (
     <Modal title={grupos.length > 1 ? "Factura del cliente" : "Factura del periodo"} onClose={onClose}>
       <div className="seleccionable" style={{ background: "#fff", color: "#1c1712", borderRadius: 12, padding: 18, maxHeight: "52vh", overflowY: "auto" }}>
-        <Row between style={{ borderBottom: "3px solid #d2772f", paddingBottom: 10, alignItems: "flex-start" }}><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, letterSpacing: 2 }}>ADOLF</div><div style={{ fontSize: 10.5, color: "#d2772f", fontWeight: 700, marginTop: 2 }}>{TAGLINE}</div></div><div style={{ textAlign: "right", fontSize: 11, color: "#666" }}><b>Estado de cuenta</b><br />{nombreMes(mes)}</div></Row>
+        <Row between style={{ borderBottom: "3px solid #d2772f", paddingBottom: 10, alignItems: "center" }}><Row style={{ gap: 10 }}><img src={logoCara} alt="" style={{ height: 46, width: 46, borderRadius: 10, objectFit: "cover" }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 800, letterSpacing: 2 }}>ADOLF</div><div style={{ fontSize: 10.5, color: "#d2772f", fontWeight: 700, marginTop: 2 }}>{TAGLINE}</div></div></Row><div style={{ textAlign: "right", fontSize: 11, color: "#666" }}><b>Estado de cuenta</b><br />{nombreMes(mes)}</div></Row>
         <div style={{ fontSize: 13, marginTop: 12 }}><b>Cliente:</b> {cliente.nombre}{cliente.telefono ? " · " + cliente.telefono : ""}</div>
         {grupos.map((g) => { const rs = resumir(g.cargos); const ab = sum(g.abonos); return (
           <div key={g.mascota.id} style={{ marginTop: 14 }}><div style={{ fontSize: 14, fontWeight: 800 }}>{emojiMascota(g.mascota.tipo)} {g.mascota.nombre}</div>
@@ -1191,6 +1304,7 @@ function Factura({ cliente, grupos, mes, onClose }) {
           {PAGOS.map((p, i) => <div key={i} style={{ fontSize: 13 }}>{p.label}: <b>{p.valor}</b></div>)}
         </div>
         <div style={{ textAlign: "center", fontFamily: display, fontWeight: 800, letterSpacing: 3, fontSize: 18, marginTop: 16 }}>ADOLF</div>
+        <div style={{ textAlign: "center", fontSize: 11.5, color: "#c837ab", marginTop: 4 }}>Instagram · @{INSTAGRAM}</div>
       </div>
       <Row style={{ gap: 10, marginTop: 18, flexWrap: "wrap" }}><button onClick={imprimir} style={{ ...btnPrim, flex: 1, minWidth: 130 }}>🖨️ Imprimir / PDF</button><button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(texto())}`, "_blank")} disabled={!tel} style={{ ...btnPrim, flex: 1, minWidth: 130, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 WhatsApp</button></Row>
     </Modal>
@@ -1314,6 +1428,51 @@ function AcordeonMovs({ movs, nombreMascota, mostrarMascota, readOnly }) {
   );
 }
 
+/* ====================== POR COBRAR ====================== */
+function Cobros({ duenos, mascotas, movs, abrir }) {
+  const lista = duenos.map((d) => {
+    const ids = mascotas.filter((m) => m.duenoId === d.id).map((m) => m.id);
+    const susMovs = movs.filter((m) => ids.includes(m.mascotaId));
+    const t = totales(susMovs);
+    return { ...d, ids, saldo: t.saldo, facturado: t.facturado, cobrado: t.cobrado };
+  }).filter((c) => c.saldo > 0).sort((a, b) => b.saldo - a.saldo);
+  const totalPorCobrar = lista.reduce((a, c) => a + c.saldo, 0);
+
+  const msg = (c) => `Hola ${c.nombre} 🐾 Te recordamos tu saldo pendiente de ${money(c.saldo)} con ADOLF por los servicios de tus mascotas. Cuando puedas, agradecemos tu pago.\n\n*Medios de pago*\n${PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n")}\n\n¡Gracias!`;
+  const pagarTodo = async (c) => {
+    const pend = movs.filter((m) => c.ids.includes(m.mascotaId) && esCargo(m) && !pagado(m));
+    if (!pend.length) return;
+    if (!confirm(`¿Marcar como PAGADOS los ${pend.length} servicios pendientes de ${c.nombre}? (Total ${money(pend.reduce((a, m) => a + Number(m.monto || 0), 0))})`)) return;
+    for (const m of pend) await updateDoc(doc(db, "movimientos", m.id), { estado: "pagado" });
+  };
+
+  return (
+    <div style={{ animation: "pop .35s ease" }}>
+      <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Por cobrar</H1>
+        <div style={{ fontSize: 14 }}>Total por cobrar: <b style={{ color: T.pend, fontSize: 18 }}>{money(totalPorCobrar)}</b></div>
+      </Row>
+      <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Clientes con saldo pendiente (todos los meses). Avisa por WhatsApp o marca el pago con un toque.</p>
+      {lista.length === 0 ? <Card style={{ marginTop: 16, textAlign: "center", padding: 40 }}><div style={{ fontSize: 34 }}>🎉</div><p style={{ color: T.muted, marginTop: 8 }}>Nadie tiene saldo pendiente. ¡Todo al día!</p></Card>
+        : <Card style={{ marginTop: 16 }}>
+            {lista.map((c, i) => { const tel = waTel(c.telefono); return (
+              <Row key={c.id} between style={{ padding: "12px 0", borderBottom: i < lista.length - 1 ? `1px solid ${T.line}` : "none", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ cursor: "pointer", minWidth: 0 }} onClick={() => abrir(c.id)}>
+                  <b style={{ fontSize: 15, color: T.cream }}>{c.nombre}</b>
+                  <div style={{ fontSize: 12, color: T.muted }}>facturado {money(c.facturado)} · cobrado {money(c.cobrado)}</div>
+                </div>
+                <Row style={{ gap: 8, alignItems: "center" }}>
+                  <b style={{ color: T.pend, fontSize: 16, fontVariantNumeric: "tabular-nums" }}>{money(c.saldo)}</b>
+                  <button onClick={() => { navigator.clipboard?.writeText(msg(c)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
+                  <button onClick={() => pagarTodo(c)} style={{ ...btnGhost, padding: "7px 11px", fontSize: 12.5, color: T.ok, borderColor: "#3a5a36" }} title="Marcar todo pagado">💵 Pagar</button>
+                  <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msg(c))}`, "_blank")} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Recordar</button>
+                </Row>
+              </Row>
+            ); })}
+          </Card>}
+    </div>
+  );
+}
+
 /* ====================== VISTA CLIENTE ====================== */
 function VistaCliente({ duenoId }) {
   const { duenos, mascotas, servicios, movs, salud, citas, bloqueos } = useDatos();
@@ -1367,7 +1526,7 @@ function VistaCliente({ duenoId }) {
   const grupos = sus.map((m) => { const mm = movs.filter((x) => x.mascotaId === m.id && mesDe(x.fecha) === mes); return { mascota: m, cargos: mm.filter(esCargo), abonos: mm.filter(esAbono) }; }).filter((g) => g.cargos.length || g.abonos.length);
   return (
     <div style={{ minHeight: "100vh", background: T.bg, color: T.text }}>
-      <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div className="adolf-header" style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logo} alt="" style={{ height: 40 }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div><div style={{ marginLeft: "auto" }}><Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} /></div></div></header>
+      <header style={{ background: "linear-gradient(180deg, rgba(46,38,29,.96), rgba(36,29,22,.92))", borderBottom: `1px solid ${T.line}` }}><div className="adolf-header" style={{ maxWidth: 760, margin: "0 auto", padding: "14px 18px", display: "flex", alignItems: "center", gap: 12 }}><img src={logoCara} alt="" style={{ height: 42, width: 42, borderRadius: 11, objectFit: "cover", border: `1px solid ${T.line2}` }} /><div><div style={{ fontFamily: display, fontSize: 28, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 10, color: T.rust, fontWeight: 600 }}>{TAGLINE}</div></div><div style={{ marginLeft: "auto" }}><Campana notis={noti.notis} noLeidas={noti.noLeidas} marcarLeidas={noti.marcarLeidas} /></div></div></header>
       <main className="adolf-main" style={{ maxWidth: 760, margin: "0 auto", padding: "22px 18px 80px" }}>
         <BannerInstalar />
         <Row between style={{ flexWrap: "wrap", gap: 10 }}><div><div style={{ fontSize: 14, color: T.muted }}>Hola,</div><H1>{cliente.nombre}</H1></div><Row style={{ gap: 8, flexWrap: "wrap" }}><button onClick={() => setSolicitar(true)} style={btnGhost} disabled={sus.length === 0}>📅 Solicitar cita</button><select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select><button onClick={() => setFactura(true)} style={btnPrim} disabled={grupos.length === 0}>🧾 Ver factura del mes</button></Row></Row>
@@ -1421,7 +1580,10 @@ function VistaCliente({ duenoId }) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginTop: 12 }}><MiniStat label="Facturado" value={money(t.facturado)} color={T.tan} /><MiniStat label="Cobrado" value={money(t.cobrado)} color={T.ok} /><MiniStat label={t.saldo >= 0 ? "Pendiente" : "A favor"} value={money(Math.abs(t.saldo))} color={t.saldo > 0 ? T.pend : T.ok} /></div>
               <div style={{ marginTop: 12 }}>{mm.length === 0 ? <Empty texto="Sin servicios este mes." /> : <AcordeonMovs movs={mm} readOnly />}</div>
             </Card>); })}
-        <div style={{ textAlign: "center", fontFamily: display, fontWeight: 800, letterSpacing: 3, color: T.cream, fontSize: 22, marginTop: 28 }}>ADOLF</div>
+        <div style={{ textAlign: "center", marginTop: 30 }}>
+          <img src={logoCuerpo} alt="ADOLF" style={{ width: "100%", maxWidth: 220, borderRadius: 16, border: `1px solid ${T.line2}`, boxShadow: "0 10px 30px rgba(0,0,0,.4)" }} />
+          <div style={{ marginTop: 12 }}><Instagram /></div>
+        </div>
       </main>
       {factura && <Factura cliente={cliente} grupos={grupos} mes={mes} onClose={() => setFactura(false)} />}
       {zoom && <Lightbox src={zoom} onClose={() => setZoom(null)} />}
@@ -1472,7 +1634,7 @@ function FormSolicitudCita({ mascotas, citas, bloqueos = [], onClose }) {
       <PickerDia fecha={fecha} setFecha={(f) => { setFecha(f); setHora(""); }} bloqueos={bloqueos} />
       <div style={{ height: 8 }} /><Label>Hora disponible</Label>
       {sinHoras ? <div style={{ background: T.pendBg, border: `1px solid ${T.pend}`, color: T.pend, borderRadius: 10, padding: "10px 12px", fontSize: 12.5 }}>Ese día no está disponible. Elige otra fecha.</div>
-        : <PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={citas} bloqueos={bloqueos} tipoServicio={tipoServicio} />}
+        : <PickerHora fecha={fecha} hora={hora} setHora={setHora} citas={citas} bloqueos={bloqueos} tipoServicio={tipoServicio} multi />}
       <div style={{ height: 12 }} /><Label>Nota (opcional)</Label><input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="ej. recoger en casa" style={inp} />
       <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={enviar} disabled={g || !hora} style={{ ...btnPrim, flex: 1 }}>{g ? "Enviando…" : "Enviar solicitud"}</button></Row>
     </Modal>
@@ -1525,6 +1687,29 @@ const Empty = ({ texto }) => <p style={{ color: T.dim, fontSize: 13, padding: "1
 const Pill = ({ children }) => <span style={{ fontSize: 11.5, color: T.muted, background: T.surface2, border: `1px solid ${T.line}`, borderRadius: 8, padding: "3px 9px" }}>{children}</span>;
 const Grid2 = ({ children }) => <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{children}</div>;
 function Row({ children, between, style, ...rest }) { return <div style={{ display: "flex", alignItems: "center", justifyContent: between ? "space-between" : "flex-start", ...style }} {...rest}>{children}</div>; }
+
+/* ====================== INSTAGRAM ====================== */
+function IgGlyph({ size = 18 }) {
+  const id = "iggrad";
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <defs><linearGradient id={id} x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0" stopColor="#feda75" /><stop offset=".35" stopColor="#fa7e1e" /><stop offset=".6" stopColor="#d62976" /><stop offset=".8" stopColor="#962fbf" /><stop offset="1" stopColor="#4f5bd5" />
+      </linearGradient></defs>
+      <rect x="2" y="2" width="20" height="20" rx="6" fill="none" stroke={`url(#${id})`} strokeWidth="2" />
+      <circle cx="12" cy="12" r="4.2" fill="none" stroke={`url(#${id})`} strokeWidth="2" />
+      <circle cx="17.3" cy="6.7" r="1.3" fill={`url(#${id})`} />
+    </svg>
+  );
+}
+function Instagram({ compact }) {
+  return (
+    <a href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer" className="seleccionable" style={{ display: "inline-flex", alignItems: "center", gap: 7, textDecoration: "none", color: T.text, background: T.surface2, border: `1px solid ${T.line2}`, borderRadius: 999, padding: compact ? "5px 12px" : "7px 14px", fontSize: compact ? 12.5 : 13.5, fontWeight: 600 }}>
+      <IgGlyph size={compact ? 16 : 18} />
+      <span>@{INSTAGRAM}</span>
+    </a>
+  );
+}
 
 /* ====================== ESTILOS ====================== */
 const cardBase = { background: T.card, border: `1px solid ${T.line}`, borderRadius: 16, padding: 18, boxShadow: T.shadow };
