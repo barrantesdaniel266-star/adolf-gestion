@@ -24,10 +24,6 @@ const TAGLINE = "🐾 Bienestar y mantenimiento para tu mascota";
 const INSTAGRAM = "adolfpets";
 const INSTAGRAM_URL = "https://instagram.com/adolfpets";
 
-// Recordatorio de baño: ciclo recomendado y días de anticipación del aviso
-const CICLO_BANO = 23; // cada cuántos días se recomienda bañar (edítalo aquí)
-const AVISO_BANO = 7;  // avisar N días antes del próximo baño
-
 // Medios de pago que aparecen en la factura (edítalos aquí cuando cambien)
 const PAGOS = [
   { label: "Ahorros Bancolombia", valor: "39700017536" },
@@ -45,8 +41,8 @@ const SERVICIOS = [
   { id: "banocor", nombre: "Baño + corte",         icon: "✂️", unidad: "sesión" },
   { id: "unas",    nombre: "Corte de uñas",        icon: "💅", unidad: "sesión" },
   { id: "deslanado", nombre: "Deslanado / desenredado", icon: "🪮", unidad: "sesión" },
-  { id: "hotel",   nombre: "Hotel por noches",     icon: "🏨", unidad: "noche"  },
-  { id: "guarde",  nombre: "Guardería por horas",  icon: "🐾", unidad: "hora"   },
+  { id: "hotel",   nombre: "Hotel",                icon: "🏨", unidad: "noche"  },
+  { id: "guarde",  nombre: "Guardería",            icon: "🐾", unidad: "hora"   },
   { id: "adiestr", nombre: "Adiestramiento",       icon: "🎓", unidad: "sesión" },
 ];
 const servInfo = (id) => SERVICIOS.find((s) => s.id === id) || { nombre: id, icon: "•", unidad: "und" };
@@ -67,7 +63,6 @@ const pagado = (m) => m.estado === "pagado";
 const fmt = (d) => d.toISOString().slice(0, 10);
 const inicioSemana = (base) => { const x = new Date(base); const off = (x.getDay() + 6) % 7; x.setDate(x.getDate() - off); x.setHours(0, 0, 0, 0); return x; };
 const diasEntre = (iso) => Math.round((new Date(iso + "T00:00:00") - new Date(hoy() + "T00:00:00")) / 86400000);
-const sumarDias = (iso, n) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
 function comprimirImagen(file, cb, max = 700, q = 0.78) {
   let llamado = false;
@@ -102,34 +97,6 @@ const fotosDe = (m) => (m && Array.isArray(m.fotos) && m.fotos.length) ? m.fotos
 const carnetsDe = (m) => (m && Array.isArray(m.carnets) && m.carnets.length) ? m.carnets : (m && m.carnet ? [m.carnet] : []);
 const pesoBase64 = (arr) => arr.reduce((a, s) => a + Math.ceil((s || "").length * 0.75), 0);
 const clienteDe = (m, duenos) => duenos.find((d) => d.id === m.duenoId) || { nombre: m.dueno || "—", telefono: m.telefono || "", email: m.email || "" };
-
-/* --- Recordatorio de baño (ciclo de CICLO_BANO días; el aviso salta AVISO_BANO días antes) --- */
-function banosPorRecordar(mascotas, movs, duenos) {
-  const res = [];
-  mascotas.forEach((m) => {
-    const banos = movs
-      .filter((x) => esCargo(x) && (x.tipoServicio === "bano" || x.tipoServicio === "banocor") && x.mascotaId === m.id && x.fecha)
-      .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
-    if (!banos.length) return; // sin baño registrado no hay fecha base
-    const ultima = banos[0].fecha;
-    const proxima = sumarDias(ultima, CICLO_BANO);
-    const dias = diasEntre(proxima); // días hasta el próximo baño recomendado
-    if (dias <= AVISO_BANO) res.push({ mascota: m, cliente: clienteDe(m, duenos), ultima, proxima, dias });
-  });
-  return res.sort((a, b) => a.dias - b.dias);
-}
-function leerRecordadosBano() { try { return JSON.parse(localStorage.getItem("adolf_bano_recordado") || "{}"); } catch { return {}; } }
-function marcarRecordadoBano(it) { const map = leerRecordadosBano(); map[it.mascota.id] = it.ultima; try { localStorage.setItem("adolf_bano_recordado", JSON.stringify(map)); } catch {} }
-function yaRecordadoBano(it) { return leerRecordadosBano()[it.mascota.id] === it.ultima; }
-function msgBano(it) {
-  const d = it.dias;
-  const cuando = d < 0 ? `y desde hace ${Math.abs(d)} día${Math.abs(d) !== 1 ? "s" : ""} ya sería momento del próximo`
-    : d === 0 ? "y hoy sería momento del próximo"
-    : d === 1 ? "y mañana recomendamos el próximo"
-    : `y en unos ${d} días recomendamos el próximo`;
-  return `Hola ${it.cliente.nombre} 🐾 El último baño de ${it.mascota.nombre} fue el ${it.ultima}. En ADOLF recomendamos un baño cada ${CICLO_BANO} días, ${cuando} 🛁. ¿Deseas que lo agendemos?`;
-}
-
 function totales(movs) {
   const cargos = movs.filter(esCargo), abonos = movs.filter(esAbono);
   const facturado = cargos.reduce((a, m) => a + Number(m.monto || 0), 0);
@@ -451,7 +418,7 @@ function Panel({ onLogout }) {
           <img src={logoCara} alt="" style={{ height: 40, width: 40, borderRadius: 11, objectFit: "cover", cursor: "pointer", border: `1px solid ${T.line2}` }} onClick={() => reset("resumen")} />
           <div style={{ cursor: "pointer" }} onClick={() => reset("resumen")}><div style={{ fontFamily: display, fontSize: 27, fontWeight: 700, letterSpacing: 3, color: T.cream, lineHeight: .9 }}>ADOLF</div><div style={{ fontSize: 9.5, color: T.rust, letterSpacing: 2.5, textTransform: "uppercase" }}>Gestión de servicios</div></div>
           <nav style={{ marginLeft: "auto", display: "flex", gap: 4, background: T.surface, borderRadius: 12, padding: 4, border: `1px solid ${T.line}`, flexWrap: "wrap" }}>
-            {[["resumen","Resumen"],["clientes","Clientes"],["agenda", citasHoy ? `Agenda (${citasHoy})` : "Agenda"],["servicios","Servicios"],["cobros", clientesPorCobrar ? `Por cobrar (${clientesPorCobrar})` : "Por cobrar"]].map(([k, l]) => (
+            {[["resumen","Resumen"],["clientes","Clientes"],["bienvenida","Bienvenida"],["agenda", citasHoy ? `Agenda (${citasHoy})` : "Agenda"],["servicios","Servicios"],["cobros", clientesPorCobrar ? `Por cobrar (${clientesPorCobrar})` : "Por cobrar"]].map(([k, l]) => (
               <button key={k} onClick={() => reset(k)} style={tab(vista === k && !clienteSel && !mascotaSel)}>{l}</button>
             ))}
           </nav>
@@ -466,6 +433,7 @@ function Panel({ onLogout }) {
           : cliente ? <ClienteDetalle cliente={cliente} mascotas={mascotas} servicios={servicios} movs={movs} duenos={duenos} abrirMascota={(id) => setMascotaSel(id)} onBack={() => setClienteSel(null)} />
           : vista === "resumen" ? <Resumen datos={datos} irMascota={(id) => setMascotaSel(id)} />
           : vista === "clientes" ? <Clientes duenos={duenos} mascotas={mascotas} abrir={(id) => setClienteSel(id)} abrirMascota={(id) => setMascotaSel(id)} />
+          : vista === "bienvenida" ? <Bienvenida duenos={duenos} mascotas={mascotas} />
           : vista === "agenda" ? <Agenda mascotas={mascotas} servicios={servicios} citas={citas} movs={movs} bloqueos={bloqueos} />
           : vista === "cobros" ? <Cobros duenos={duenos} mascotas={mascotas} movs={movs} abrir={(id) => setClienteSel(id)} />
           : <Servicios mascotas={mascotas} servicios={servicios} movs={movs} />}
@@ -478,91 +446,61 @@ function Panel({ onLogout }) {
 
 /* ====================== RESUMEN + REPORTES + HERRAMIENTAS ====================== */
 function Resumen({ datos, irMascota }) {
-  const { duenos, mascotas, servicios, movs, citas, salud } = datos;
+  const { duenos, mascotas, servicios, movs, citas } = datos;
   const [mes, setMes] = useState(mesActual());
-  const [banoTick, setBanoTick] = useState(0);
   const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
   const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
 
-  const porTipo = SERVICIOS.map((s) => { const it = t.cargos.filter((m) => m.tipoServicio === s.id); return { ...s, total: it.reduce((a, m) => a + Number(m.monto || 0), 0), n: it.length }; }).filter((x) => x.n > 0).sort((a, b) => b.total - a.total);
-  const ranking = mascotas.map((mc) => { const it = t.cargos.filter((m) => m.mascotaId === mc.id); return { ...mc, total: it.reduce((a, m) => a + Number(m.monto || 0), 0), n: it.length }; }).filter((x) => x.n > 0).sort((a, b) => b.total - a.total);
+  // clientes que deben (sobre todos los meses) — dato "amigable" para la portada
+  const clientesDeben = duenos.filter((d) => { const ids = mascotas.filter((m) => m.duenoId === d.id).map((m) => m.id); return totales(movs.filter((m) => ids.includes(m.mascotaId))).saldo > 0; }).length;
 
-  // por cliente (para reportes)
-  const porCliente = duenos.map((d) => {
-    const ids = mascotas.filter((m) => m.duenoId === d.id).map((m) => m.id);
-    const tc = totales(movs.filter((m) => ids.includes(m.mascotaId) && mesDe(m.fecha) === mes));
-    return { ...d, ...tc };
-  }).filter((x) => x.facturado > 0 || x.saldo !== 0).sort((a, b) => b.facturado - a.facturado);
+  const nombreMascota = (id) => (mascotas.find((m) => m.id === id) || {}).nombre || "Mascota";
+  const activa = (c) => { const e = c.estado || "agendado"; return e !== "completado" && e !== "rechazado"; };
+  const citasHoy = citas.filter((c) => c.fecha === hoy() && activa(c)).sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
+  const proximas = citas.filter((c) => c.fecha > hoy() && activa(c)).sort((a, b) => (a.fecha + a.hora).localeCompare(b.fecha + b.hora)).slice(0, 8);
+  const etiquetaEstado = (e) => (e || "agendado") === "solicitado" ? "Por confirmar" : "Agendada";
+  const colorEstado = (e) => (e || "agendado") === "solicitado" ? T.rustSoft : T.ok;
+  const fechaCorta = (iso) => { const d = new Date(iso + "T00:00:00"); return `${DIA_ABBR[d.getDay()]} ${d.getDate()} ${MES_ABBR[d.getMonth()]}`; };
 
-  const pendientes = porCliente.filter((c) => c.saldo > 0);
-
-  // alertas de vacunas
-  const alertasVac = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30).map((s) => { const m = mascotas.find((x) => x.id === s.mascotaId); return { ...s, mascota: m, dias: diasEntre(s.proxima) }; }).filter((x) => x.mascota).sort((a, b) => a.dias - b.dias);
-
-  // recordatorios de baño (ciclo de CICLO_BANO días); se ocultan los ya recordados
-  const banos = useMemo(() => banosPorRecordar(mascotas, movs, duenos).filter((it) => !yaRecordadoBano(it)), [mascotas, movs, duenos, banoTick]);
-  const recordarBano = (it) => { const tel = waTel(it.cliente.telefono); if (tel) window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msgBano(it))}`, "_blank"); marcarRecordadoBano(it); setBanoTick((x) => x + 1); };
-  const descartarBano = (it) => { marcarRecordadoBano(it); setBanoTick((x) => x + 1); };
+  const FilaCita = ({ c, conFecha }) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; return (
+    <Row between style={{ padding: "10px 0", gap: 10, flexWrap: "wrap", cursor: "pointer" }} onClick={() => irMascota(c.mascotaId)}>
+      <Row style={{ gap: 11, minWidth: 0 }}>
+        <div style={{ textAlign: "center", minWidth: 46 }}>
+          {conFecha && <div style={{ fontSize: 10.5, color: T.muted, textTransform: "capitalize" }}>{fechaCorta(c.fecha)}</div>}
+          <div style={{ fontSize: 15, fontWeight: 800, color: T.rustSoft, fontVariantNumeric: "tabular-nums" }}>{c.hora || "--:--"}</div>
+        </div>
+        <div style={{ minWidth: 0 }}><b style={{ fontSize: 14 }}>{inf.icon} {nombreMascota(c.mascotaId)}</b><div style={{ fontSize: 11.5, color: T.muted }}>{inf.nombre}{c.nota ? ` · ${c.nota}` : ""}</div></div>
+      </Row>
+      <span style={{ ...badge, background: T.surface2, color: colorEstado(est), borderColor: colorEstado(est) }}>{etiquetaEstado(est)}</span>
+    </Row>
+  ); };
 
   return (
     <div style={{ animation: "pop .35s ease" }}>
-      <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Resumen del mes</H1>
+      <Row between style={{ flexWrap: "wrap", gap: 8 }}>
+        <div><H1>Hola, Yelianny 👋</H1><div style={{ color: T.muted, fontSize: 13, marginTop: 2 }}>Este es el resumen de {nombreMes(mes)}.</div></div>
         <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, width: "auto", padding: "9px 12px" }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
       </Row>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, marginTop: 16 }}>
         <Stat label="Facturado" value={money(t.facturado)} accent={T.tan} sub={`${t.cargos.length} servicios`} />
         <Stat label="Cobrado" value={money(t.cobrado)} accent={T.ok} sub="pagos + abonos" />
-        <Stat label={t.saldo >= 0 ? "Saldo pendiente" : "Saldo a favor"} value={money(Math.abs(t.saldo))} accent={t.saldo > 0 ? T.pend : T.ok} sub={`${pendientes.length} clientes deben`} />
+        <Stat label={t.saldo >= 0 ? "Saldo pendiente" : "Saldo a favor"} value={money(Math.abs(t.saldo))} accent={t.saldo > 0 ? T.pend : T.ok} sub={clientesDeben ? `${clientesDeben} ${clientesDeben === 1 ? "cliente debe" : "clientes deben"}` : "todo al día"} />
         <Stat label="Clientes" value={duenos.length} accent={T.rust} sub={`${mascotas.length} mascotas`} />
       </div>
 
-      {banos.length > 0 && (
-        <Card style={{ marginTop: 16, borderColor: T.info }}>
-          <Row style={{ gap: 10, alignItems: "center" }}>
-            <img src={logoCara} alt="" style={{ height: 30, width: 30, borderRadius: 8, objectFit: "cover", border: `1px solid ${T.line2}` }} />
-            <H2>🛁 Baños por recordar</H2>
-          </Row>
-          <p style={{ fontSize: 12, color: T.muted, margin: "6px 0 8px" }}>Mascotas próximas a cumplir su ciclo de baño (cada {CICLO_BANO} días). Avisa al cliente con un toque de WhatsApp.</p>
-          {banos.map((it, i) => { const tel = waTel(it.cliente.telefono); return (
-            <Row key={it.mascota.id} between style={{ padding: "9px 0", borderBottom: i < banos.length - 1 ? `1px solid ${T.line}` : "none", gap: 8, flexWrap: "wrap" }}>
-              <div style={{ cursor: "pointer", minWidth: 0 }} onClick={() => irMascota(it.mascota.id)}>
-                <b style={{ fontSize: 13.5 }}>{emojiMascota(it.mascota.tipo)} {it.mascota.nombre}</b>
-                <div style={{ fontSize: 11.5, color: T.muted }}>{it.cliente.nombre} · último baño {it.ultima} · {it.dias < 0 ? `atrasado ${Math.abs(it.dias)} d` : it.dias === 0 ? "toca hoy" : `en ${it.dias} d`}</div>
-              </div>
-              <Row style={{ gap: 6 }}>
-                <button onClick={() => { navigator.clipboard?.writeText(msgBano(it)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
-                <button onClick={() => descartarBano(it)} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Marcar como recordado">✓</button>
-                <button onClick={() => recordarBano(it)} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Recordar</button>
-              </Row>
-            </Row>
-          ); })}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 16, marginTop: 16 }}>
+        <Card>
+          <H2>📅 Citas de hoy</H2>
+          {citasHoy.length === 0
+            ? <Empty texto="No hay citas para hoy. ☕" />
+            : citasHoy.map((c, i) => <div key={c.id} style={{ borderBottom: i < citasHoy.length - 1 ? `1px solid ${T.line}` : "none" }}><FilaCita c={c} /></div>)}
         </Card>
-      )}
-
-      {alertasVac.length > 0 && (
-        <Card style={{ marginTop: 16, borderColor: T.pend }}>
-          <H2>💉 Alertas de vacunas</H2>
-          {alertasVac.map((a) => (
-            <Row key={a.id} between style={{ padding: "8px 0", borderBottom: `1px solid ${T.line}`, cursor: "pointer" }} onClick={() => irMascota(a.mascota.id)}>
-              <span style={{ fontSize: 13.5 }}>{a.mascota.nombre} · {a.titulo}</span>
-              <b style={{ color: a.dias < 0 ? T.danger : T.pend, fontSize: 12.5 }}>{a.dias < 0 ? `vencida hace ${Math.abs(a.dias)} d` : a.dias === 0 ? "es hoy" : `en ${a.dias} d`}</b>
-            </Row>
-          ))}
-        </Card>
-      )}
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
-        <Card><H2>Ingresos por servicio</H2>
-          {porTipo.length === 0 ? <Empty texto="Sin servicios este mes." /> : porTipo.map((x) => { const pct = t.facturado ? Math.round((x.total / t.facturado) * 100) : 0; return (
-            <div key={x.id} style={{ marginTop: 12 }}><Row between><span style={{ fontSize: 13.5 }}>{x.icon} {x.nombre} <span style={{ color: T.dim }}>· {x.n}</span></span><b style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.total)}</b></Row>
-              <div style={{ height: 7, background: T.surface2, borderRadius: 6, marginTop: 6, overflow: "hidden" }}><div style={{ width: pct + "%", height: "100%", background: `linear-gradient(90deg,${T.rust},${T.tan})`, borderRadius: 6 }} /></div></div>); })}
-        </Card>
-        <Card><H2>Cuánto genera cada mascota</H2>
-          {ranking.length === 0 ? <Empty texto="Sin servicios este mes." /> : ranking.map((m, i) => (
-            <Row key={m.id} between style={{ padding: "10px 0", borderBottom: i < ranking.length - 1 ? `1px solid ${T.line}` : "none", cursor: "pointer" }} onClick={() => irMascota(m.id)}>
-              <span style={{ display: "flex", alignItems: "center", gap: 9 }}><Avatar mascota={m} /><span><b style={{ fontSize: 14 }}>{m.nombre}</b><div style={{ fontSize: 11.5, color: T.muted }}>{m.raza} · {m.n} serv.</div></span></span>
-              <b style={{ fontVariantNumeric: "tabular-nums", color: T.tan }}>{money(m.total)}</b></Row>))}
+        <Card>
+          <H2>🗓️ Próximas citas</H2>
+          {proximas.length === 0
+            ? <Empty texto="Sin citas próximas por ahora." />
+            : proximas.map((c, i) => <div key={c.id} style={{ borderBottom: i < proximas.length - 1 ? `1px solid ${T.line}` : "none" }}><FilaCita c={c} conFecha /></div>)}
         </Card>
       </div>
     </div>
@@ -591,67 +529,17 @@ function RecordatoriosPago({ pendientes, duenos, mes, onClose }) {
   );
 }
 
-/* ====================== RECORDATORIOS DE VACUNAS ====================== */
-function RecordatoriosVacunas({ alertas, onClose }) {
-  const estadoTxt = (d) => d < 0 ? `venció hace ${Math.abs(d)} día${Math.abs(d) !== 1 ? "s" : ""}` : d === 0 ? "vence hoy" : `vence en ${d} día${d !== 1 ? "s" : ""}`;
-  const msg = (a) => `Hola ${a.cliente.nombre} 🐾 Recordatorio de ADOLF: la vacuna "${a.titulo}" de ${a.mascota.nombre} ${estadoTxt(a.dias)} (fecha prevista: ${a.proxima}). Escríbenos para agendar y mantenerla al día. ¡Gracias!`;
-  return (
-    <Modal title="Recordatorios de vacunas" onClose={onClose}>
-      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Mascotas con vacuna próxima o vencida. Envía el aviso al dueño con un toque.</p>
-      {alertas.length === 0 ? <Empty texto="Ninguna vacuna próxima o vencida. 🎉" /> : alertas.map((a) => {
-        const tel = waTel(a.cliente.telefono);
-        return (
-          <Row key={a.id} between style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
-            <div><b style={{ fontSize: 14 }}>{a.mascota.nombre} · {a.titulo}</b><div style={{ fontSize: 12, color: a.dias < 0 ? T.danger : T.pend }}>{estadoTxt(a.dias)} · {a.cliente.nombre}</div></div>
-            <Row style={{ gap: 6 }}>
-              <button onClick={() => { navigator.clipboard?.writeText(msg(a)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
-              <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msg(a))}`, "_blank")} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Avisar</button>
-            </Row>
-          </Row>
-        );
-      })}
-    </Modal>
-  );
-}
-
-/* ====================== RECORDATORIOS DE BAÑO ====================== */
-function RecordatoriosBano({ lista, onClose }) {
-  const [tick, setTick] = useState(0);
-  const items = lista.filter((it) => !yaRecordadoBano(it));
-  const recordar = (it) => { const tel = waTel(it.cliente.telefono); if (tel) window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msgBano(it))}`, "_blank"); marcarRecordadoBano(it); setTick((t) => t + 1); };
-  const descartar = (it) => { marcarRecordadoBano(it); setTick((t) => t + 1); };
-  return (
-    <Modal title="Recordatorios de baño" onClose={onClose}>
-      <p style={{ fontSize: 12.5, color: T.muted, marginBottom: 14 }}>Mascotas próximas a su próximo baño (ciclo de {CICLO_BANO} días; el aviso aparece {AVISO_BANO} días antes). Envía el recordatorio con un toque.</p>
-      {items.length === 0 ? <Empty texto="Ninguna mascota por recordar ahora. 🎉" /> : items.map((it) => { const tel = waTel(it.cliente.telefono); return (
-        <Row key={it.mascota.id} between style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}`, gap: 8, flexWrap: "wrap" }}>
-          <div><b style={{ fontSize: 14 }}>{emojiMascota(it.mascota.tipo)} {it.mascota.nombre}</b><div style={{ fontSize: 12, color: it.dias < 0 ? T.danger : T.info }}>{it.cliente.nombre} · último {it.ultima} · {it.dias < 0 ? `atrasado ${Math.abs(it.dias)} d` : it.dias === 0 ? "hoy" : `en ${it.dias} d`}</div></div>
-          <Row style={{ gap: 6 }}>
-            <button onClick={() => { navigator.clipboard?.writeText(msgBano(it)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
-            <button onClick={() => descartar(it)} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Marcar como recordado">✓</button>
-            <button onClick={() => recordar(it)} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Recordar</button>
-          </Row>
-        </Row>
-      ); })}
-    </Modal>
-  );
-}
-
 /* ====================== PANEL DE ADMINISTRACIÓN ====================== */
 function AdminPanel({ datos, onClose }) {
   const { duenos, mascotas, servicios, movs, citas, salud } = datos;
   const [mes, setMes] = useState(mesActual());
   const [recordatorios, setRecordatorios] = useState(false);
-  const [vacunas, setVacunas] = useState(false);
-  const [banos, setBanos] = useState(false);
   const mesesDisp = useMemo(() => { const s = new Set(movs.map((m) => mesDe(m.fecha)).filter(Boolean)); s.add(mesActual()); return [...s].sort().reverse(); }, [movs]);
   const t = totales(movs.filter((m) => mesDe(m.fecha) === mes));
   const porTipo = SERVICIOS.map((s) => { const it = t.cargos.filter((m) => m.tipoServicio === s.id); return { ...s, total: it.reduce((a, m) => a + Number(m.monto || 0), 0), n: it.length }; }).filter((x) => x.n > 0).sort((a, b) => b.total - a.total);
   const porCliente = duenos.map((d) => { const ids = mascotas.filter((m) => m.duenoId === d.id).map((m) => m.id); return { ...d, ...totales(movs.filter((m) => ids.includes(m.mascotaId) && mesDe(m.fecha) === mes)) }; }).filter((x) => x.facturado > 0 || x.saldo !== 0).sort((a, b) => b.facturado - a.facturado);
   const pendientes = porCliente.filter((c) => c.saldo > 0);
   const ultBackup = Number(localStorage.getItem("adolf_backup_last") || 0);
-  const alertasVac = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30).map((s) => { const m = mascotas.find((x) => x.id === s.mascotaId); return m ? { ...s, mascota: m, cliente: clienteDe(m, duenos), dias: diasEntre(s.proxima) } : null; }).filter(Boolean).sort((a, b) => a.dias - b.dias);
-  const listaBanos = banosPorRecordar(mascotas, movs, duenos).filter((it) => !yaRecordadoBano(it));
 
   const exportarCSV = () => {
     const filas = [["Fecha", "Cliente", "Mascota", "Tipo", "Concepto", "Cantidad", "Monto", "Pago"]];
@@ -695,18 +583,14 @@ function AdminPanel({ datos, onClose }) {
       <Label>Mes para reportes y exportación</Label>
       <select value={mes} onChange={(e) => setMes(e.target.value)} style={{ ...inp, marginBottom: 16 }}>{mesesDisp.map((m) => <option key={m} value={m}>{nombreMes(m)}</option>)}</select>
 
-      {opcion("🛁", `Recordatorios de baño${listaBanos.length ? ` (${listaBanos.length})` : ""}`, listaBanos.length ? "Avisar por WhatsApp del próximo baño" : "Ninguna mascota por recordar ahora", () => listaBanos.length && setBanos(true), { disabled: listaBanos.length === 0 })}
       {opcion("📣", `Recordatorios de pago${pendientes.length ? ` (${pendientes.length})` : ""}`, pendientes.length ? "Avisar por WhatsApp a quienes deben" : "Nadie tiene saldo pendiente este mes", () => pendientes.length && setRecordatorios(true), { disabled: pendientes.length === 0 })}
-      {opcion("💉", `Recordatorios de vacunas${alertasVac.length ? ` (${alertasVac.length})` : ""}`, alertasVac.length ? "Avisar a clientes por WhatsApp" : "Ninguna vacuna próxima o vencida", () => alertasVac.length && setVacunas(true), { disabled: alertasVac.length === 0 })}
       {opcion("📊", "Exportar a Excel (CSV)", `Detalle de movimientos de ${nombreMes(mes)}`, exportarCSV)}
       {opcion("🧾", "Reporte PDF del mes", "Totales, por servicio y por cliente", reportePDF)}
       {opcion("💾", "Descargar respaldo", ultBackup ? `Última copia: ${new Date(ultBackup).toLocaleDateString("es-CO")}` : "Aún no has descargado un respaldo", respaldo)}
 
       <p style={{ fontSize: 11.5, color: T.dim, marginTop: 8, lineHeight: 1.6 }}>El respaldo descarga todos tus datos en un archivo. Guárdalo en un lugar seguro (correo, nube o computador) cada cierto tiempo.</p>
       <div style={{ textAlign: "center", marginTop: 14 }}><Instagram compact /></div>
-      {banos && <RecordatoriosBano lista={banosPorRecordar(mascotas, movs, duenos)} onClose={() => setBanos(false)} />}
       {recordatorios && <RecordatoriosPago pendientes={pendientes} duenos={duenos} mes={mes} onClose={() => setRecordatorios(false)} />}
-      {vacunas && <RecordatoriosVacunas alertas={alertasVac} onClose={() => setVacunas(false)} />}
     </Modal>
   );
 }
@@ -816,25 +700,25 @@ function Agenda({ mascotas, servicios, citas, movs, bloqueos = [] }) {
         <button onClick={() => setOffset(offset + 1)} style={btnGhost}>Semana →</button>
       </Row>
 
-      <div style={{ overflowX: "auto", marginTop: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(150px,1fr))", gap: 8, minWidth: 980 }}>
+      <div style={{ overflowX: "auto", marginTop: 16, paddingBottom: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(190px,1fr))", gap: 12, minWidth: 1150 }}>
           {dias.map((d, i) => {
             const iso = fmt(d); const esHoy = iso === hoy();
             const delDia = citas.filter((c) => c.fecha === iso).sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
             const bloqDia = bloqueos.filter((b) => b.fecha === iso).sort((a, b) => (a.hora || "").localeCompare(b.hora || ""));
             const todoBloq = bloqDia.find((b) => !b.hora);
             return (
-              <div key={i} style={{ background: esHoy ? "#33271a" : T.card, border: `1px solid ${esHoy ? T.rust : T.line}`, borderRadius: 13, padding: 10, minHeight: 160 }}>
-                <div style={{ textAlign: "center", paddingBottom: 8, borderBottom: `1px solid ${T.line}`, marginBottom: 8 }}><div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase" }}>{DIAS[i]}</div><div style={{ fontSize: 18, fontWeight: 800, color: esHoy ? T.rust : T.cream }}>{d.getDate()}</div></div>
+              <div key={i} style={{ background: esHoy ? "#33271a" : T.card, border: `1px solid ${esHoy ? T.rust : T.line}`, borderRadius: 15, padding: 13, minHeight: 210 }}>
+                <div style={{ textAlign: "center", paddingBottom: 10, borderBottom: `1px solid ${T.line}`, marginBottom: 10 }}><div style={{ fontSize: 11.5, color: T.muted, textTransform: "uppercase", letterSpacing: .5 }}>{DIAS[i]}</div><div style={{ fontSize: 21, fontWeight: 800, color: esHoy ? T.rust : T.cream }}>{d.getDate()}</div></div>
                 {todoBloq && <div style={{ background: "#3a1f1a", border: `1px solid ${T.danger}`, borderRadius: 8, padding: "5px 7px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 10.5, color: T.danger, fontWeight: 700 }}>🔒 Día bloqueado{todoBloq.motivo ? `: ${todoBloq.motivo}` : ""}</span><button onClick={() => quitarBloqueo(todoBloq)} style={{ ...xBtn, fontSize: 11 }}>✕</button></div>}
                 {!todoBloq && bloqDia.filter((b) => b.hora).map((b) => (
                   <div key={b.id} style={{ background: "#33271a", border: `1px dashed ${T.danger}`, borderRadius: 8, padding: "5px 7px", marginBottom: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}><span style={{ fontSize: 10.5, color: T.danger, fontWeight: 700 }}>🔒 {b.hora}{b.motivo ? ` · ${b.motivo}` : ""}</span><button onClick={() => quitarBloqueo(b)} style={{ ...xBtn, fontSize: 11 }}>✕</button></div>
                 ))}
                 {delDia.length === 0 && !bloqDia.length ? <div style={{ fontSize: 11, color: T.dim, textAlign: "center", paddingTop: 8 }}>—</div> : delDia.map((c) => { const inf = servInfo(c.tipoServicio); const est = c.estado || "agendado"; const esSol = est === "solicitado"; const esRec = est === "rechazado"; return (
-                  <div key={c.id} style={{ background: T.surface2, border: esSol ? `1px dashed ${T.rust}` : `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 8, padding: "7px 8px", marginBottom: 6, opacity: esRec ? .6 : 1 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: T.cream }}>{c.hora || "--:--"} {inf.icon}{esSol && " 🔔"}</div>
-                    <div style={{ fontSize: 12, color: T.text, textDecoration: esRec ? "line-through" : "none" }}>{nombreMascota(c.mascotaId)}</div>
-                    <div style={{ fontSize: 10.5, color: T.muted }}>{inf.nombre}{c.nota ? ` · ${c.nota}` : ""}</div>
+                  <div key={c.id} style={{ background: T.surface2, border: esSol ? `1px dashed ${T.rust}` : `1px solid ${T.line2}`, borderLeft: `3px solid ${colorEstado(est)}`, borderRadius: 10, padding: "9px 10px", marginBottom: 8, opacity: esRec ? .6 : 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: T.cream }}>{c.hora || "--:--"} {inf.icon}{esSol && " 🔔"}</div>
+                    <div style={{ fontSize: 13, color: T.text, textDecoration: esRec ? "line-through" : "none" }}>{nombreMascota(c.mascotaId)}</div>
+                    <div style={{ fontSize: 11, color: T.muted }}>{inf.nombre}{c.nota ? ` · ${c.nota}` : ""}</div>
                     {esSol ? (
                       <Row style={{ marginTop: 5, gap: 4 }}>
                         <button onClick={() => confirmar(c)} style={{ fontSize: 9.5, fontWeight: 700, color: T.ok, background: "transparent", border: `1px solid ${T.ok}`, borderRadius: 6, padding: "2px 6px", cursor: "pointer" }}>✓ Confirmar</button>
@@ -929,18 +813,25 @@ function FormCita({ mascotas, citas = [], bloqueos = [], onClose }) {
 /* ====================== CLIENTES ====================== */
 function Clientes({ duenos, mascotas, abrir, abrirMascota }) {
   const [buscar, setBuscar] = useState(""), [form, setForm] = useState(null);
-  const lista = duenos.filter((d) => { const q = buscar.toLowerCase(); return !q || [d.nombre, d.telefono, d.email].some((v) => (v || "").toLowerCase().includes(q)); });
+  const q = buscar.trim().toLowerCase();
+  // La búsqueda enlaza cliente ↔ mascota: puedes buscar por nombre de cliente O de mascota
+  const lista = duenos.filter((d) => {
+    if (!q) return true;
+    const enCliente = [d.nombre, d.telefono, d.email].some((v) => (v || "").toLowerCase().includes(q));
+    const enMascota = mascotas.filter((m) => m.duenoId === d.id).some((m) => [m.nombre, m.raza].some((v) => (v || "").toLowerCase().includes(q)));
+    return enCliente || enMascota;
+  });
   const sinCliente = mascotas.filter((m) => !m.duenoId || !duenos.find((d) => d.id === m.duenoId));
   return (
     <div style={{ animation: "pop .35s ease" }}>
       <Row between><H1>Clientes</H1><button onClick={() => setForm({})} style={btnPrim}>+ Nuevo cliente</button></Row>
-      <input value={buscar} onChange={(e) => setBuscar(e.target.value)} placeholder="Buscar cliente…" style={{ ...inp, marginTop: 16 }} />
+      <input value={buscar} onChange={(e) => setBuscar(e.target.value)} placeholder="Buscar por cliente o mascota…" style={{ ...inp, marginTop: 16 }} />
       {lista.length === 0 ? <Card style={{ marginTop: 16, textAlign: "center", padding: 40 }}><div style={{ fontSize: 38 }}>👤</div><p style={{ color: T.muted, marginTop: 8 }}>No hay clientes. Crea uno y agrégale sus mascotas.</p></Card>
         : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 14, marginTop: 18 }}>
             {lista.map((d) => { const sus = mascotas.filter((m) => m.duenoId === d.id); return (
               <div key={d.id} onClick={() => abrir(d.id)} style={{ ...cardBase, cursor: "pointer", transition: "transform .12s, border-color .12s" }} onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.borderColor = T.rust; }} onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.borderColor = T.line; }}>
                 <Row style={{ gap: 11 }}><div style={{ width: 46, height: 46, borderRadius: 13, background: `linear-gradient(135deg,${T.rust},${T.tan})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: "#241405" }}>{(d.nombre || "?").charAt(0).toUpperCase()}</div><div style={{ minWidth: 0 }}><div style={{ fontSize: 17, fontWeight: 700, color: T.cream }}>{d.nombre}</div><div style={{ fontSize: 12, color: T.muted }}>{d.telefono || "sin teléfono"}</div></div></Row>
-                <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>{sus.length === 0 ? <Pill>Sin mascotas</Pill> : sus.slice(0, 4).map((m) => <Pill key={m.id}>{m.nombre}</Pill>)}{sus.length > 4 && <Pill>+{sus.length - 4}</Pill>}</div>
+                <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>{sus.length === 0 ? <Pill>Sin mascotas</Pill> : [...sus].sort((a, b) => { const ma = q && [a.nombre, a.raza].some((v) => (v || "").toLowerCase().includes(q)); const mb = q && [b.nombre, b.raza].some((v) => (v || "").toLowerCase().includes(q)); return (mb ? 1 : 0) - (ma ? 1 : 0); }).slice(0, 4).map((m) => { const match = q && [m.nombre, m.raza].some((v) => (v || "").toLowerCase().includes(q)); return <button key={m.id} onClick={(e) => { e.stopPropagation(); abrirMascota(m.id); }} style={{ fontSize: 11.5, color: match ? T.rustSoft : T.muted, background: T.surface2, border: `1px solid ${match ? T.rust : T.line}`, borderRadius: 8, padding: "3px 9px", cursor: "pointer" }}>{m.nombre}</button>; })}{sus.length > 4 && <Pill>+{sus.length - 4}</Pill>}</div>
               </div>); })}
           </div>}
       {sinCliente.length > 0 && <Card style={{ marginTop: 22, borderColor: T.pend }}><H2>Mascotas sin cliente asignado</H2><p style={{ fontSize: 12.5, color: T.muted, margin: "4px 0 12px" }}>Ábrelas y asígnales un cliente con “Editar”.</p><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{sinCliente.map((m) => <button key={m.id} onClick={() => abrirMascota(m.id)} style={chip}>{m.nombre} ›</button>)}</div></Card>}
@@ -1186,14 +1077,27 @@ function FormSalud({ mascotaId, onClose }) {
 /* ====================== FORM SERVICIO ====================== */
 function FormServicio({ inicial, mascotaId, onClose }) {
   const editando = !!(inicial && inicial.id);
-  const [tipo, setTipo] = useState(inicial?.tipo || "paseo"), [modalidad, setModalidad] = useState(inicial?.modalidad || "unidad"), [valor, setValor] = useState(inicial?.valor ? String(inicial.valor) : "");
+  const [tipo, setTipo] = useState(inicial?.tipo || "paseo");
+  const [modalidad, setModalidad] = useState(inicial?.modalidad || "unidad");
+  const [valor, setValor] = useState(inicial?.valor ? String(inicial.valor) : "");
+  // Guardería se cobra por hora o por día (no tiene mensualidad)
+  const [unidadGuarde, setUnidadGuarde] = useState(inicial?.tipo === "guarde" ? (inicial?.unidad || "hora") : "hora");
   const inf = servInfo(tipo); const [g, setG] = useState(false);
-  const guardar = async () => { const v = Number(valor); if (!v || v <= 0) return alert("Ingresa un valor válido."); setG(true); const data = { mascotaId, tipo, modalidad, valor: v, unidad: inf.unidad }; try { if (editando) await updateDoc(doc(db, "servicios", inicial.id), data); else await addDoc(collection(db, "servicios"), { ...data, createdAt: Date.now() }); onClose(); } catch (e) { alert("Error: " + e.message); setG(false); } };
+  const esGuarde = tipo === "guarde";
+  const unidadFinal = esGuarde ? unidadGuarde : inf.unidad;
+  const guardar = async () => { const v = Number(valor); if (!v || v <= 0) return alert("Ingresa un valor válido."); setG(true); const data = { mascotaId, tipo, modalidad: esGuarde ? "unidad" : modalidad, valor: v, unidad: unidadFinal }; try { if (editando) await updateDoc(doc(db, "servicios", inicial.id), data); else await addDoc(collection(db, "servicios"), { ...data, createdAt: Date.now() }); onClose(); } catch (e) { alert("Error: " + e.message); setG(false); } };
   return (
     <Modal title={editando ? "Editar servicio" : "Agregar servicio"} onClose={onClose}>
       <Label>Tipo de servicio</Label><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>{SERVICIOS.map((s) => <button key={s.id} onClick={() => setTipo(s.id)} style={{ ...chip, ...(tipo === s.id ? chipOn : {}), textAlign: "left", padding: "10px 11px" }}>{s.icon} {s.nombre}</button>)}</div>
-      <Label>Modalidad</Label><div style={{ display: "flex", gap: 8, marginBottom: 14 }}><button onClick={() => setModalidad("unidad")} style={{ ...chip, ...(modalidad === "unidad" ? chipOn : {}), flex: 1 }}>Por {inf.unidad}</button><button onClick={() => setModalidad("mensual")} style={{ ...chip, ...(modalidad === "mensual" ? chipOn : {}), flex: 1 }}>Mensualidad</button></div>
-      <Label>{modalidad === "mensual" ? "Valor mensualidad" : `Valor por ${inf.unidad}`}</Label><input type="number" value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0" style={inp} />
+      {esGuarde ? (<>
+        <Label>Cómo se cobra la guardería</Label><div style={{ display: "flex", gap: 8, marginBottom: 14 }}><button onClick={() => setUnidadGuarde("hora")} style={{ ...chip, ...(unidadGuarde === "hora" ? chipOn : {}), flex: 1 }}>Por hora</button><button onClick={() => setUnidadGuarde("día")} style={{ ...chip, ...(unidadGuarde === "día" ? chipOn : {}), flex: 1 }}>Por día</button></div>
+        <Label>{`Valor por ${unidadGuarde}`}</Label>
+        <div style={{ fontSize: 11, color: T.dim, margin: "0 0 4px" }}>Puedes crear una tarifa por hora y otra por día como servicios separados.</div>
+      </>) : (<>
+        <Label>Modalidad</Label><div style={{ display: "flex", gap: 8, marginBottom: 14 }}><button onClick={() => setModalidad("unidad")} style={{ ...chip, ...(modalidad === "unidad" ? chipOn : {}), flex: 1 }}>Por {inf.unidad}</button><button onClick={() => setModalidad("mensual")} style={{ ...chip, ...(modalidad === "mensual" ? chipOn : {}), flex: 1 }}>Mensualidad</button></div>
+        <Label>{modalidad === "mensual" ? "Valor mensualidad" : `Valor por ${inf.unidad}`}</Label>
+      </>)}
+      <input type="number" value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0" style={inp} />
       <Row style={{ gap: 10, marginTop: 20 }}><button onClick={onClose} style={{ ...btnGhost, flex: 1 }}>Cancelar</button><button onClick={guardar} disabled={g} style={{ ...btnPrim, flex: 1 }}>{g ? "Guardando…" : "Guardar"}</button></Row>
     </Modal>
   );
@@ -1263,16 +1167,25 @@ function Factura({ cliente, grupos, mes, onClose }) {
   const detalleR = (r) => r.modalidad === "mensual" ? `${r.n} ${r.n === 1 ? "mes" : "meses"}` : `${r.cantidad} ${plural(r.unidad, r.cantidad)}`;
 
   const texto = () => {
-    let t = `🐾 *ADOLF* — Estado de cuenta\n${nombreMes(mes)}\n\nCliente: ${cliente.nombre}\n`;
+    let t = `🐾 *ADOLF* — Estado de cuenta\n`;
+    t += `Hola ${cliente.nombre}, este es el resumen de *${nombreMes(mes)}*:\n`;
     grupos.forEach((g) => {
       t += `\n${emojiMascota(g.mascota.tipo)} *${g.mascota.nombre}*\n`;
       const rs = resumir(g.cargos); const ab = sum(g.abonos);
       if (!rs.length && !ab) t += `• Sin movimientos\n`;
-      rs.forEach((r) => { t += `• ${servInfo(r.tipo).nombre}: ${detalleR(r)} — ${money(r.monto)}\n`; });
-      if (ab) t += `• Abonos/pagos: −${money(ab)}\n`;
+      rs.forEach((r) => { t += `• ${servInfo(r.tipo).nombre} (${detalleR(r)}): ${money(r.monto)}\n`; });
+      if (ab) t += `• Abonos / pagos: −${money(ab)}\n`;
     });
-    t += `\n*Total servicios: ${money(facturado)}*\n*Cobrado: ${money(cobrado)}*\n*SALDO ${saldo >= 0 ? "PENDIENTE" : "A FAVOR"}: ${money(Math.abs(saldo))}*`;
-    t += `\n\n*Medios de pago*\n` + PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n");
+    t += `\n────────────\n`;
+    t += `Total servicios: ${money(facturado)}\n`;
+    t += `Ya pagado: ${money(cobrado)}\n`;
+    t += saldo >= 0 ? `*Saldo pendiente: ${money(saldo)}*` : `*Saldo a favor: ${money(Math.abs(saldo))}*`;
+    if (saldo > 0) {
+      t += `\n\n*Medios de pago*\n` + PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n");
+      t += `\n\nCuando hagas el pago, envíanos el comprobante. ¡Gracias! 🐾`;
+    } else {
+      t += `\n\n¡Estás al día! Gracias por confiar en nosotros 🐾`;
+    }
     t += `\n\nSíguenos en Instagram: @${INSTAGRAM}`;
     return t;
   };
@@ -1428,6 +1341,35 @@ function AcordeonMovs({ movs, nombreMascota, mostrarMascota, readOnly }) {
   );
 }
 
+/* ====================== BIENVENIDA (clientes nuevos) ====================== */
+function Bienvenida({ duenos, mascotas }) {
+  const [buscar, setBuscar] = useState("");
+  const q = buscar.trim().toLowerCase();
+  const lista = [...duenos].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).filter((d) => !q || [d.nombre, d.telefono].some((v) => (v || "").toLowerCase().includes(q)));
+  const linkDe = (d) => `${window.location.origin}/c/${d.id}`;
+  const msgDe = (d) => `Hola ${d.nombre} 🐾 ¡Bienvenido/a a ADOLF! Este es tu acceso personal.\n\nDesde este enlace puedes:\n• Agendar paseos, baños y más servicios\n• Ver la información de tus mascotas\n• Consultar tus servicios, facturas y saldos\n• Recibir avisos cuando confirmemos tus citas\n\nGuárdalo, es solo para ti:\n${linkDe(d)}\n\nSíguenos en Instagram: @${INSTAGRAM}`;
+  return (
+    <div style={{ animation: "pop .35s ease" }}>
+      <H1>Bienvenida</H1>
+      <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Envía a tus clientes (sobre todo los nuevos) su enlace personal y el mensaje de bienvenida. Los más recientes aparecen primero.</p>
+      <input value={buscar} onChange={(e) => setBuscar(e.target.value)} placeholder="Buscar cliente…" style={{ ...inp, marginTop: 14 }} />
+      {lista.length === 0 ? <Card style={{ marginTop: 16, textAlign: "center", padding: 36 }}><div style={{ fontSize: 34 }}>👋</div><p style={{ color: T.muted, marginTop: 8 }}>No hay clientes todavía. Créalos en la pestaña Clientes.</p></Card>
+        : <Card style={{ marginTop: 16 }}>
+            {lista.map((d, i) => { const tel = waTel(d.telefono); const nM = mascotas.filter((m) => m.duenoId === d.id).length; return (
+              <Row key={d.id} between style={{ padding: "12px 0", borderBottom: i < lista.length - 1 ? `1px solid ${T.line}` : "none", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}><b style={{ fontSize: 15, color: T.cream }}>{d.nombre}</b><div style={{ fontSize: 12, color: T.muted }}>{d.telefono || "sin teléfono"} · {nM} {nM === 1 ? "mascota" : "mascotas"}</div></div>
+                <Row style={{ gap: 8 }}>
+                  <button onClick={() => { navigator.clipboard?.writeText(linkDe(d)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar enlace">🔗 Enlace</button>
+                  <button onClick={() => { navigator.clipboard?.writeText(msgDe(d)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
+                  <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msgDe(d))}`, "_blank")} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Bienvenida</button>
+                </Row>
+              </Row>
+            ); })}
+          </Card>}
+    </div>
+  );
+}
+
 /* ====================== POR COBRAR ====================== */
 function Cobros({ duenos, mascotas, movs, abrir }) {
   const lista = duenos.map((d) => {
@@ -1438,7 +1380,7 @@ function Cobros({ duenos, mascotas, movs, abrir }) {
   }).filter((c) => c.saldo > 0).sort((a, b) => b.saldo - a.saldo);
   const totalPorCobrar = lista.reduce((a, c) => a + c.saldo, 0);
 
-  const msg = (c) => `Hola ${c.nombre} 🐾 Te recordamos tu saldo pendiente de ${money(c.saldo)} con ADOLF por los servicios de tus mascotas. Cuando puedas, agradecemos tu pago.\n\n*Medios de pago*\n${PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n")}\n\n¡Gracias!`;
+  const msg = (c) => `Hola ${c.nombre}, tienes un saldo pendiente de *${money(c.saldo)}* con ADOLF 🐾. Por favor realiza el pago a la mayor brevedad.\n\n*Medios de pago*\n${PAGOS.map((p) => `${p.label}: ${p.valor}`).join("\n")}\n\nApenas hagas el pago, envíanos el comprobante. ¡Gracias!`;
   const pagarTodo = async (c) => {
     const pend = movs.filter((m) => c.ids.includes(m.mascotaId) && esCargo(m) && !pagado(m));
     if (!pend.length) return;
@@ -1451,7 +1393,7 @@ function Cobros({ duenos, mascotas, movs, abrir }) {
       <Row between style={{ flexWrap: "wrap", gap: 8 }}><H1>Por cobrar</H1>
         <div style={{ fontSize: 14 }}>Total por cobrar: <b style={{ color: T.pend, fontSize: 18 }}>{money(totalPorCobrar)}</b></div>
       </Row>
-      <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Clientes con saldo pendiente (todos los meses). Avisa por WhatsApp o marca el pago con un toque.</p>
+      <p style={{ color: T.muted, fontSize: 13, marginTop: 6 }}>Clientes con saldo pendiente (todos los meses). Cóbrale por WhatsApp o registra el pago con un toque.</p>
       {lista.length === 0 ? <Card style={{ marginTop: 16, textAlign: "center", padding: 40 }}><div style={{ fontSize: 34 }}>🎉</div><p style={{ color: T.muted, marginTop: 8 }}>Nadie tiene saldo pendiente. ¡Todo al día!</p></Card>
         : <Card style={{ marginTop: 16 }}>
             {lista.map((c, i) => { const tel = waTel(c.telefono); return (
@@ -1463,8 +1405,8 @@ function Cobros({ duenos, mascotas, movs, abrir }) {
                 <Row style={{ gap: 8, alignItems: "center" }}>
                   <b style={{ color: T.pend, fontSize: 16, fontVariantNumeric: "tabular-nums" }}>{money(c.saldo)}</b>
                   <button onClick={() => { navigator.clipboard?.writeText(msg(c)); }} style={{ ...btnGhost, padding: "6px 10px", fontSize: 12 }} title="Copiar mensaje">📋</button>
-                  <button onClick={() => pagarTodo(c)} style={{ ...btnGhost, padding: "7px 11px", fontSize: 12.5, color: T.ok, borderColor: "#3a5a36" }} title="Marcar todo pagado">💵 Pagar</button>
-                  <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msg(c))}`, "_blank")} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Recordar</button>
+                  <button onClick={() => pagarTodo(c)} style={{ ...btnGhost, padding: "7px 11px", fontSize: 12.5, color: T.ok, borderColor: "#3a5a36" }} title="Registrar que ya pagó">✓ Pagado</button>
+                  <button onClick={() => window.open(`https://wa.me/${tel}?text=${encodeURIComponent(msg(c))}`, "_blank")} disabled={!tel} title={!tel ? "Sin teléfono" : ""} style={{ ...btnPrim, padding: "7px 12px", fontSize: 12.5, background: tel ? "linear-gradient(180deg,#3ed47e,#1faa5a)" : T.surface2, color: tel ? "#0e2412" : T.dim }}>💬 Cobrar</button>
                 </Row>
               </Row>
             ); })}
@@ -1503,20 +1445,6 @@ function VistaCliente({ duenoId }) {
     prevEst.current = map;
   }, [citas, mascotas]);
 
-  // Aviso de vacunas próximas o vencidas (una sola vez por alerta)
-  useEffect(() => {
-    const susM = mascotas.filter((m) => m.duenoId === duenoId);
-    const alertas = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30 && susM.find((m) => m.id === s.mascotaId));
-    if (!alertas.length) return;
-    let avisadas; try { avisadas = new Set(JSON.parse(localStorage.getItem("adolf_vac_avis_" + duenoId) || "[]")); } catch { avisadas = new Set(); }
-    const nuevas = alertas.filter((a) => !avisadas.has(a.id + "|" + a.proxima));
-    if (!nuevas.length) return;
-    const a0 = nuevas[0]; const m = mascotas.find((x) => x.id === a0.mascotaId); const d = diasEntre(a0.proxima);
-    const det = nuevas.length > 1 ? `${nuevas.length} vacunas de tus mascotas requieren atención` : `${m ? m.nombre : ""}: ${a0.titulo} ${d < 0 ? "vencida" : d === 0 ? "vence hoy" : `vence en ${d} días`}`;
-    noti.push({ titulo: "Recordatorio de vacunas 💉", detalle: det });
-    nuevas.forEach((a) => avisadas.add(a.id + "|" + a.proxima));
-    try { localStorage.setItem("adolf_vac_avis_" + duenoId, JSON.stringify([...avisadas])); } catch {}
-  }, [salud, mascotas]);
   const cliente = duenos.find((d) => d.id === duenoId);
   const sus = mascotas.filter((m) => m.duenoId === duenoId);
   if (!cliente && cargando) return <Centro><div style={{ color: T.muted }}>Cargando…</div></Centro>;
@@ -1549,22 +1477,6 @@ function VistaCliente({ duenoId }) {
                   </Row>
                 </Row>
               ); })}
-            </Card>
-          );
-        })()}
-
-        {(() => {
-          const av = salud.filter((s) => s.proxima && diasEntre(s.proxima) <= 30 && sus.find((m) => m.id === s.mascotaId)).map((s) => ({ ...s, mascota: mascotas.find((m) => m.id === s.mascotaId), dias: diasEntre(s.proxima) })).sort((a, b) => a.dias - b.dias);
-          if (!av.length) return null;
-          return (
-            <Card style={{ marginTop: 16, borderColor: T.pend }}>
-              <H2>💉 Vacunas por revisar</H2>
-              {av.map((a, i) => (
-                <Row key={a.id} between style={{ padding: "8px 0", borderBottom: i < av.length - 1 ? `1px solid ${T.line}` : "none" }}>
-                  <span style={{ fontSize: 13.5 }}>{a.mascota ? a.mascota.nombre : ""} · {a.titulo}</span>
-                  <b style={{ color: a.dias < 0 ? T.danger : T.pend, fontSize: 12.5 }}>{a.dias < 0 ? `vencida hace ${Math.abs(a.dias)} d` : a.dias === 0 ? "es hoy" : `en ${a.dias} d`}</b>
-                </Row>
-              ))}
             </Card>
           );
         })()}
